@@ -27,7 +27,7 @@ const { width } = Dimensions.get('window');
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signIn } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,9 +52,17 @@ export default function LoginScreen() {
 
   const onLogin = async () => {
     if (busy) return;
+    if (!email || !password) {
+      alert('Please enter your email and password');
+      return;
+    }
     setBusy(true);
-    await signIn(email, password);
-    router.replace('/(tabs)/home');
+    const result = await signIn(email.trim(), password.trim());
+    if (result.success) {
+      router.replace('/(tabs)/home');
+    } else {
+      alert(result.error);
+    }
     setBusy(false);
   };
 
@@ -108,7 +116,20 @@ export default function LoginScreen() {
             </View>
 
             {/* Google Login */}
-            <TouchableOpacity style={styles.googleBtn} activeOpacity={0.8}>
+            <TouchableOpacity 
+              style={styles.googleBtn} 
+              activeOpacity={0.8}
+              onPress={async () => {
+                setBusy(true);
+                try {
+                  await signInWithGoogle('login');
+                } catch (err) {
+                  alert('Google Sign-In failed. Please try again.');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
               <Ionicons name="logo-google" size={20} color="#EA4335" />
               <Text style={styles.googleBtnText}>Log in with Google</Text>
             </TouchableOpacity>
@@ -314,49 +335,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1A202C',
   },
-  visualContainer: { marginTop: 40, paddingHorizontal: 20 },
-  visualCard: { 
-    height: 480, 
-    borderRadius: 32, 
-    overflow: 'hidden', 
-    backgroundColor: '#0F172A',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.3,
-    shadowRadius: 30,
-    elevation: 20
-  },
-  visualImage: { width: '100%', height: '100%' },
-  visualOverlay: { position: 'absolute', inset: 0, justifyContent: 'flex-end', padding: 32 },
-  visualContent: { gap: 12 },
-  visualTitle: { 
-    fontFamily: 'InterBold', 
-    fontSize: 32, 
-    color: '#fff', 
-    letterSpacing: -0.5,
-    lineHeight: 40
-  },
-  statsBadge: { 
-    position: 'absolute', 
-    top: 24, 
-    right: 24, 
-    backgroundColor: 'rgba(255,255,255,0.92)', 
-    borderRadius: 20, 
-    padding: 12, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    gap: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,1)'
-  },
-  statsIcon: { 
-    width: 40, 
-    height: 40, 
-    borderRadius: 20, 
-    backgroundColor: '#fff', 
-    alignItems: 'center', 
-    justifyContent: 'center' 
-  },
-  statsTitle: { fontSize: 13, fontWeight: '800', color: '#1A202C' },
-  statsSub: { fontSize: 11, color: '#718096', fontWeight: '600' },
 });

@@ -18,6 +18,8 @@ import { FeedPostCard } from '@/components/occ/FeedPostCard';
 import { MOCK_FEED_POSTS, MOCK_EVENTS } from '@/constants/occ-mock-feed';
 import { ClubDetailModal } from '@/components/occ/ClubDetailModal';
 import { EventDetailModal } from '@/components/occ/EventDetailModal';
+import { useAuth, authHeaders, API_URL, resolveUrl } from '@/context/auth-context';
+import { useEffect } from 'react';
 
 const { width } = Dimensions.get('window');
 
@@ -54,12 +56,96 @@ const EXPLORE_CLUBS = [
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { handleScroll, handleScrollEnd } = useScroll();
+  const { token, ready } = useAuth();
   const [activeSegment, setActiveSegment] = useState<'POSTS' | 'CLUBS' | 'EVENTS'>('POSTS');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClub, setSelectedClub] = useState<any>(null);
   const [clubModalVisible, setClubModalVisible] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [eventModalVisible, setEventModalVisible] = useState(false);
+
+  const [livePosts, setLivePosts] = useState<any[]>([]);
+  const [liveClubs, setLiveClubs] = useState<any[]>([]);
+  const [liveEvents, setLiveEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchData = async (segment: string, query: string) => {
+    setLoading(true);
+    try {
+      if (segment === 'POSTS') {
+        const res = await fetch(`${API_URL}/api/explore/posts?q=${query}`, {
+          headers: authHeaders(token)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.posts) {
+            setLivePosts(data.posts.map((p: any) => ({
+              id: p.id,
+              author: { 
+                name: p.user?.fullName || 'User', 
+                avatarUrl: resolveUrl(p.user?.avatar) || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80',
+                verified: p.user?.role === 'CLUB_HEADER' || p.user?.role === 'ADMIN',
+                handle: p.club?.slug || p.user?.fullName?.split(' ')[0].toLowerCase() || 'member'
+              },
+              timeLabel: 'now',
+              imageUrl: resolveUrl(p.imageUrl || (p.imageUrls && p.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90',
+              caption: p.caption || p.content || '',
+              likes: p.likesCount || 0,
+              comments: p.commentsCount || 0,
+            })));
+          }
+        }
+      } else if (segment === 'CLUBS') {
+        const res = await fetch(`${API_URL}/api/clubs?q=${query}`, {
+          headers: authHeaders(token)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.clubs) {
+            setLiveClubs(data.clubs.map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              category: c.slug.toUpperCase(),
+              image: resolveUrl(c.coverImage) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=90',
+              members: c.memberCount || 0,
+              eliteCount: c.memberCount || 0,
+              description: c.description || '',
+              title: c.name
+            })));
+          }
+        }
+      } else if (segment === 'EVENTS') {
+        const res = await fetch(`${API_URL}/api/events?q=${query}`, {
+          headers: authHeaders(token)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.events) {
+            setLiveEvents(data.events.map((e: any) => ({
+              id: e.id,
+              title: e.title,
+              clubName: e.club?.name || 'Club',
+              dateLabel: e.date ? new Date(e.date).toLocaleDateString() : 'Soon',
+              imageUrl: resolveUrl(e.imageUrl) || resolveUrl(e.club?.coverImage) || 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=90',
+              description: e.description || '',
+              location: e.location || 'Campus',
+              attendees: 42
+            })));
+          }
+        }
+      }
+    } catch (err) {
+      console.log('Explore fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ready) {
+      fetchData(activeSegment, searchQuery);
+    }
+  }, [activeSegment, searchQuery, ready]);
 
   const handleOpenClub = (club: any) => {
     const formatted = {
@@ -74,17 +160,6 @@ export default function ExploreScreen() {
     setSelectedEvent(ev);
     setEventModalVisible(true);
   };
-
-  // Search Logic
-  const filteredPosts = [...MOCK_FEED_POSTS].reverse().filter(p => 
-    p.author.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    p.caption.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const filteredClubs = EXPLORE_CLUBS.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   const filteredEvents = MOCK_EVENTS.filter(e => 
     e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -145,10 +220,10 @@ export default function ExploreScreen() {
         {/* Dynamic Content */}
         {activeSegment === 'POSTS' && (
           <View style={styles.postSpace}>
-            {filteredPosts.map((post) => (
+            {livePosts.map((post) => (
               <FeedPostCard key={post.id} post={post} width={width} />
             ))}
-            {filteredPosts.length === 0 && (
+            {livePosts.length === 0 && !loading && (
               <View style={styles.noResults}><Text style={styles.noResultsText}>No posts found for "{searchQuery}"</Text></View>
             )}
           </View>
@@ -156,12 +231,12 @@ export default function ExploreScreen() {
 
         {activeSegment === 'CLUBS' && (
           <View style={styles.cardList}>
-            {filteredClubs.map(club => (
+            {liveClubs.map(club => (
               <TouchableOpacity key={club.id} activeOpacity={0.9} onPress={() => handleOpenClub(club)}>
                 <ExploreClubCard club={club} />
               </TouchableOpacity>
             ))}
-            {filteredClubs.length === 0 && (
+            {liveClubs.length === 0 && !loading && (
               <View style={styles.noResults}><Text style={styles.noResultsText}>No clubs found for "{searchQuery}"</Text></View>
             )}
           </View>
@@ -169,12 +244,12 @@ export default function ExploreScreen() {
 
         {activeSegment === 'EVENTS' && (
           <View style={styles.cardList}>
-            {filteredEvents.map(ev => (
+            {liveEvents.map(ev => (
               <TouchableOpacity key={ev.id} activeOpacity={0.9} onPress={() => handleOpenEvent(ev)}>
                 <ExploreEventCard event={ev} />
               </TouchableOpacity>
             ))}
-            {filteredEvents.length === 0 && (
+            {liveEvents.length === 0 && !loading && (
               <View style={styles.noResults}><Text style={styles.noResultsText}>No events found for "{searchQuery}"</Text></View>
             )}
           </View>

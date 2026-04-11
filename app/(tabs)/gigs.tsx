@@ -14,6 +14,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { dash } from '@/constants/occ-dashboard-theme';
 import { router } from 'expo-router';
+import { useAuth, authHeaders, API_URL } from '@/context/auth-context';
+import { usePusherChannel } from '@/hooks/usePusher';
+import { useEffect, useState, useCallback } from 'react';
 
 const { width, height } = Dimensions.get('window');
 const CARD_W = width * 0.92;
@@ -132,6 +135,50 @@ function GigCard({ gig }: { gig: any }) {
 
 export default function GigsScreen() {
   const insets = useSafeAreaInsets();
+  const { token, ready } = useAuth();
+  const [gigs, setGigs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // REALTIME SOCKET BRIDGE: Listen to Vercel global Gig updates
+  usePusherChannel('occ-e-clubs', 'update', (payload) => {
+    console.log('[WEBSOCKET] Real-time Gig Update Detected!', payload);
+    fetchGigs(); // Instantly refresh the UI silently!
+  });
+
+  const fetchGigs = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/gigs`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.gigs) {
+          setGigs(data.gigs.map((g: any) => ({
+            id: g.id,
+            title: g.title,
+            club: g.club?.name || 'Club',
+            postedBy: g.postedBy?.fullName || 'Admin',
+            budget: `₹${g.payMin} – ₹${g.payMax}`,
+            deadline: g.deadline ? new Date(g.deadline).toLocaleDateString() : 'No Deadline',
+            time: g.deadline ? new Date(g.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+            status: 'Open',
+            requirements: g.description ? g.description.split('\n').filter((l: string) => l.trim().length > 0) : [],
+          })));
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching gigs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ready) {
+      fetchGigs();
+    }
+  }, [ready]);
 
   return (
     <View style={styles.container}>
@@ -156,9 +203,13 @@ export default function GigsScreen() {
           scrollEventThrottle={16}
           contentContainerStyle={styles.carouselContainer}
         >
-          {MOCK_GIGS.map((gig) => (
+          {gigs.length > 0 ? gigs.map((gig) => (
             <GigCard key={gig.id} gig={gig} />
-          ))}
+          )) : !loading && (
+            <View style={{ width: width - 40, padding: 40, alignItems: 'center' }}>
+              <Text style={{ fontFamily: 'InterBold', color: dash.textSoft }}>No active gigs at the moment.</Text>
+            </View>
+          )}
         </ScrollView>
       </View>
     </View>

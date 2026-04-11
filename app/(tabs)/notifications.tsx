@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useAuth, authHeaders, API_URL } from '@/context/auth-context';
+import { useEffect } from 'react';
 
 import { OccScreenScaffold } from '@/components/occ/OccScreenScaffold';
 import { dash } from '@/constants/occ-dashboard-theme';
@@ -48,6 +50,41 @@ const MOCK_MESSAGES = [
 export default function NotificationsScreen() {
   const [activeTab, setActiveTab ] = useState<'announcements' | 'social'>('announcements');
   const router = useRouter();
+  const { token, ready } = useAuth();
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const fetchNotifications = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/notifications`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.notifications) {
+          setNotifications(data.notifications.map((n: any) => ({
+            id: n.id,
+            club: n.title,
+            body: n.message,
+            time: n.createdAt ? new Date(n.createdAt).toLocaleDateString() : 'now',
+            image: 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=120&q=80', // Fallback icon
+            reactions: 0,
+          })));
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching notifications:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ready) {
+      fetchNotifications();
+    }
+  }, [ready]);
 
   // Helper for type-safe navigation
   const navigateTo = (path: string, params: Record<string, string>) => {
@@ -81,26 +118,32 @@ export default function NotificationsScreen() {
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.list}>
           {activeTab === 'announcements' ? (
-            MOCK_ANNOUNCEMENTS.map((item) => (
-              <TouchableOpacity 
-                key={item.id} 
-                activeOpacity={0.9}
-                onPress={() => navigateTo(`/announcement/${item.id}`, { name: item.club, image: item.image })}
-                style={styles.messageRow}
-              >
-                <View style={styles.avatarContainer}>
-                  <Image source={{ uri: item.image }} style={styles.userAvatar} />
-                </View>
-                <View style={styles.messageContent}>
-                  <View style={styles.messageHeader}>
-                    <Text style={styles.userName}>{item.club}</Text>
-                    <Text style={styles.messageTime}>{item.time}</Text>
+            notifications.length > 0 ? (
+              notifications.map((item) => (
+                <TouchableOpacity 
+                  key={item.id} 
+                  activeOpacity={0.9}
+                  onPress={() => navigateTo(`/announcement/${item.id}`, { name: item.club, image: item.image })}
+                  style={styles.messageRow}
+                >
+                  <View style={styles.avatarContainer}>
+                    <Image source={{ uri: item.image }} style={styles.userAvatar} />
                   </View>
-                  <Text style={styles.messageBody} numberOfLines={1}>{item.body}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
-              </TouchableOpacity>
-            ))
+                  <View style={styles.messageContent}>
+                    <View style={styles.messageHeader}>
+                      <Text style={styles.userName} numberOfLines={1}>{item.club}</Text>
+                      <Text style={styles.messageTime}>{item.time}</Text>
+                    </View>
+                    <Text style={styles.messageBody} numberOfLines={2}>{item.body}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
+                </TouchableOpacity>
+              ))
+            ) : !loading && (
+              <View style={styles.footerInfo}>
+                <Text style={styles.footerInfoText}>No new announcements.</Text>
+              </View>
+            )
           ) : (
             MOCK_MESSAGES.map((item) => (
               <TouchableOpacity 

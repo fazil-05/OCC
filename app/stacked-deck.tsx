@@ -7,7 +7,8 @@ import Animated, {
   withSpring, 
   interpolate, 
   Extrapolate,
-  runOnJS
+  runOnJS,
+  SharedValue
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,7 +25,27 @@ const DATA = [
   { id: 4, title: 'NEON NIGHTS', subtitle: '2026 • Cyberpunk • Sci-Fi', image: 'https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=1200&q=80', tag: 'Popular' },
 ];
 
-const MovieCard = ({ item, index, activeIndex, totalItems, translateX }) => {
+interface MovieDataItem {
+  id: number;
+  title: string;
+  subtitle: string;
+  image: string;
+  tag: string;
+}
+
+const MovieCard = ({ 
+  item, 
+  index, 
+  activeIndex, 
+  totalItems, 
+  translateX 
+}: { 
+  item: MovieDataItem; 
+  index: number; 
+  activeIndex: number; 
+  totalItems: number; 
+  translateX: SharedValue<number> 
+}) => {
   const position = index - activeIndex;
 
   const animatedStyle = useAnimatedStyle(() => {

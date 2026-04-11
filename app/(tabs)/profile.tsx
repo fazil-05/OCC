@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -17,47 +17,102 @@ import {
 } from 'react-native';
 
 import { OccScreenScaffold } from '@/components/occ/OccScreenScaffold';
-import { useAuth } from '@/context/auth-context';
+import { useAuth, resolveUrl } from '@/context/auth-context';
+import { dash } from '@/constants/occ-dashboard-theme';
 
 const { width } = Dimensions.get('window');
 
 export default function ProfileScreen() {
-  const { user: authUser, signOut } = useAuth();
+  const { user: authUser, signOut, refreshProfile } = useAuth();
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [form, setForm] = useState({
-    name: 'FAZIL',
-    college: 'UNKNOWN COLLEGE',
-    joinedDate: '4/4/2026',
-    email: 'fazil80883@gmail.com',
-    phone: '6586023109',
-    bio: '',
-    profilePicture: 'https://images.unsplash.com/photo-1542909168-82c3e7fdca5c?w=400&q=80',
+    name: authUser?.fullName || '',
+    college: authUser?.collegeName || '',
+    joinedDate: authUser?.createdAt ? new Date(authUser.createdAt).toLocaleDateString() : '—',
+    email: authUser?.email || '',
+    phone: authUser?.phoneNumber || '—',
+    bio: authUser?.bio || '',
+    profilePicture: resolveUrl(authUser?.avatar) || 'https://api.dicebear.com/7.x/avataaars/png?seed=Felix&backgroundColor=b6e3f4',
   });
 
+  // Refresh profile from backend on mount to get latest avatar, bio, etc.
+  useEffect(() => {
+    refreshProfile();
+  }, []);
+
+  // Keep form in sync with auth state whenever user data updates
+  React.useEffect(() => {
+    if (authUser) {
+      setForm(prev => ({
+        ...prev,
+        name: authUser.fullName || prev.name,
+        college: authUser.collegeName || prev.college,
+        joinedDate: authUser.createdAt ? new Date(authUser.createdAt).toLocaleDateString() : prev.joinedDate,
+        email: authUser.email || prev.email,
+        phone: authUser.phoneNumber || prev.phone,
+        bio: authUser.bio || prev.bio,
+        profilePicture: resolveUrl(authUser.avatar) || prev.profilePicture,
+      }));
+    }
+  }, [authUser]);
+
   const stats = [
-    { label: 'CLUBS', value: '4' },
-    { label: 'EVENTS', value: '1' },
-    { label: 'GIGS', value: '1' },
+    { label: 'CLUBS', value: String(authUser?.memberships?.length || 0) },
+    { label: 'EVENTS', value: String(authUser?.registrations?.length || 0) },
+    { label: 'GIGS', value: String(authUser?.gigsApplied?.length || 0) },
   ];
 
-  const clusters = [
-    {
-      id: '1',
-      name: 'BIKERS',
-      label: '10 ELITE',
-      desc: 'Weekend rides, bike checks, mountain roads.',
-      image: 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=800&q=80'
-    },
-    {
-      id: '2',
-      name: 'MUSIC',
-      label: '8 ELITE',
-      desc: 'Open mics, studio sessions, collabs.',
-      image: 'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800&q=80'
-    },
-  ];
+  // Club slug/theme → fallback cover photo map
+  const CLUB_FALLBACK_IMAGES: Record<string, string> = {
+    bikers:      'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=90',
+    fitness:     'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=90',
+    gaming:      'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=1200&q=90',
+    music:       'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1200&q=90',
+    photography: 'https://images.unsplash.com/photo-1452587925148-ce544e77e70d?auto=format&fit=crop&w=1200&q=90',
+    fashion:     'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&w=1200&q=90',
+    football:    'https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?auto=format&fit=crop&w=1200&q=90',
+    sports:      'https://images.unsplash.com/photo-1551958219-acbc608c6377?auto=format&fit=crop&w=1200&q=90',
+    art:         'https://images.unsplash.com/photo-1460661419201-fd4cecdf8a8b?auto=format&fit=crop&w=1200&q=90',
+    tech:        'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=90',
+    dance:       'https://images.unsplash.com/photo-1504609813442-a8924e83f76e?auto=format&fit=crop&w=1200&q=90',
+    cooking:     'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?auto=format&fit=crop&w=1200&q=90',
+    // theme-based fallbacks
+    amber:       'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=90',
+    charcoal:    'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=90',
+    purple:      'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?auto=format&fit=crop&w=1200&q=90',
+    blue:        'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=1200&q=90',
+    green:       'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=1200&q=90',
+    red:         'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?auto=format&fit=crop&w=1200&q=90',
+  };
+
+  function getClubImage(club: { coverImage?: string | null; slug?: string; theme?: string | null; name?: string }): string {
+    if (club.coverImage) return resolveUrl(club.coverImage)!;
+    // Try slug match
+    const slug = (club.slug || '').toLowerCase();
+    const slugKey = Object.keys(CLUB_FALLBACK_IMAGES).find(k => slug.includes(k));
+    if (slugKey) return CLUB_FALLBACK_IMAGES[slugKey];
+    // Try theme match
+    const theme = (club.theme || '').toLowerCase();
+    if (CLUB_FALLBACK_IMAGES[theme]) return CLUB_FALLBACK_IMAGES[theme];
+    // Try name match
+    const name = (club.name || '').toLowerCase();
+    const nameKey = Object.keys(CLUB_FALLBACK_IMAGES).find(k => name.includes(k));
+    if (nameKey) return CLUB_FALLBACK_IMAGES[nameKey];
+    // Default
+    return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=90';
+  }
+
+  // Dynamically map real clubs with smart fallback images
+  const clusters = (authUser?.memberships || []).map((m) => ({
+    id: m.club.id,
+    name: m.club.name.toUpperCase(),
+    label: 'MEMBER',
+    desc: m.club.description || 'Community member.',
+    image: getClubImage({ coverImage: m.club.coverImage, slug: m.club.slug, theme: m.club.theme, name: m.club.name }),
+  }));
 
   const handlePickProfilePicture = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -94,7 +149,7 @@ export default function ProfileScreen() {
 
           <View style={styles.unifiedHeaderRow}>
             <View style={styles.userInfoSide}>
-              <Image source={{ uri: form.profilePicture }} style={styles.topAvatar} />
+              <Image source={{ uri: form.profilePicture }} style={styles.topAvatar} key={form.profilePicture} />
               <View style={styles.userMeta}>
                 <Text style={styles.userName}>{form.name}</Text>
                 <Text style={styles.userCollege}>{form.college}</Text>
@@ -160,7 +215,7 @@ export default function ProfileScreen() {
         <View style={styles.clustersSection}>
           <Text style={styles.sectionOverline}>MY CLUSTERS</Text>
           <View style={styles.clustersScroll}>
-            {clusters.map((cluster) => (
+            {clusters.length > 0 ? clusters.map((cluster) => (
               <View key={cluster.id} style={styles.clusterCard}>
                 <Image source={{ uri: cluster.image }} style={styles.clusterImage} />
                 <LinearGradient
@@ -183,7 +238,13 @@ export default function ProfileScreen() {
                   </View>
                 </LinearGradient>
               </View>
-            ))}
+            )) : (
+              <View style={styles.emptyClubsCard}>
+                <Ionicons name="sparkles-outline" size={24} color="#7C3AED" style={{ marginBottom: 8 }} />
+                <Text style={styles.emptyClubsText}>READY TO JOIN YOUR FIRST CLUB?</Text>
+                <Text style={styles.emptyClubsSub}>Head to the discovery tab to find your community.</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -659,5 +720,28 @@ const styles = StyleSheet.create({
     fontFamily: 'InterBold',
     fontSize: 11,
     color: '#000',
+  },
+  emptyClubsCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 32,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    minHeight: 200,
+  },
+  emptyClubsText: {
+    fontFamily: 'ArchivoHeavyItalic',
+    fontSize: 18,
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  emptyClubsSub: {
+    fontFamily: 'InterSemi',
+    fontSize: 13,
+    color: '#94A3B8',
+    textAlign: 'center',
   },
 });

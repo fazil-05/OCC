@@ -13,8 +13,31 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth, authHeaders, API_URL, resolveUrl } from '@/context/auth-context';
 import { FeedPostCard } from '@/components/occ/FeedPostCard';
-import { MOCK_FEED_POSTS } from '@/constants/occ-mock-feed';
+
+const dummySocialSeed = (entityId: string, salt: string) => {
+  let h = 2166136261;
+  const s = `${salt}:${entityId}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 1 + (Math.abs(h) % 799);
+};
+
+const displayClubMembers = (clubId: string, realMembers: number, storedBase?: number | null, slug?: string) => {
+  // Website often uses slug for public seeds to remain consistent even if IDs rotate
+  const seedKey = slug || clubId;
+  const base = (storedBase != null && storedBase >= 100 && storedBase < 800)
+    ? storedBase
+    : dummySocialSeed(seedKey, "club-followers");
+  return base + Math.max(0, realMembers);
+};
+
+const displayPostLikes = (postId: string, realLikes: number) => {
+  return dummySocialSeed(postId, "post-likes") + Math.max(0, realLikes);
+};
 
 const { width, height } = Dimensions.get('window');
 
@@ -24,7 +47,10 @@ type Club = {
   category: string;
   description: string;
   image: string;
-  eliteCount: number;
+  eliteCount?: number;
+  memberCount?: number;
+  memberDisplayBase?: number | null;
+  slug?: string;
 };
 
 type TabKey = 'FEED' | 'EVENTS' | 'GIGS';
@@ -85,20 +111,60 @@ export function ClubDetailModal({
   visible,
   onClose,
 }: {
-  club: any | null;
+  club: Club | null;
   visible: boolean;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
   const [activeTab, setActiveTab] = React.useState<TabKey>('FEED');
   const [showFullDesc, setShowFullDesc] = React.useState(false);
+
+  const [livePosts, setLivePosts] = React.useState<any[]>([]);
+  const [liveEvents, setLiveEvents] = React.useState<any[]>([]);
+  const [liveGigs, setLiveGigs] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!visible || !club) return;
+    
+    const fetchClubData = async () => {
+      setLoading(true);
+      try {
+        const [postsRes, gigsRes, eventsRes] = await Promise.all([
+          fetch(`${API_URL}/api/posts?clubId=${club.id}`, { headers: authHeaders(token) }),
+          fetch(`${API_URL}/api/gigs`, { headers: authHeaders(token) }),
+          fetch(`${API_URL}/api/events`, { headers: authHeaders(token) })
+        ]);
+
+        if (postsRes.ok) {
+          const d = await postsRes.json();
+          setLivePosts(d.posts || []);
+        }
+        if (gigsRes.ok) {
+          const d = await gigsRes.json();
+          setLiveGigs((d.gigs || []).filter((g: any) => g.clubId === club.id));
+        }
+        if (eventsRes.ok) {
+          const d = await eventsRes.json();
+          setLiveEvents((d.events || []).filter((e: any) => e.clubId === club.id));
+        }
+      } catch (e) {
+        console.log('[ClubDetailModal] Fetch error:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchClubData();
+  }, [visible, club?.id]);
 
   useEffect(() => {
     if (!visible) return;
 
     const handleHardwareBack = () => {
       onClose();
-      return true; // CONSUME THE EVENT
+      return true;
     };
 
     const backHandlerSubscription = BackHandler.addEventListener(
@@ -118,104 +184,81 @@ export function ClubDetailModal({
       case 'FEED':
         return (
           <View style={styles.tabPane}>
-             {/* DYNAMIC CLUB-SPECIFIC POSTS */}
-             {MOCK_FEED_POSTS.slice(0, 3).map((post, idx) => (
+             {livePosts.length > 0 ? livePosts.map((post) => (
                 <FeedPostCard 
-                  key={`${club.id}-${idx}`} 
+                  key={post.id} 
                   post={{
                     ...post,
+                    likes: displayPostLikes(post.id, post.likesCount || 0),
+                    comments: post.comments?.length || 0,
                     author: {
-                      name: club.name,
-                      handle: club.name.toLowerCase().replace(/\s/g, '_'),
-                      avatarUrl: club.image,
-                      verified: true
+                      name: post.user?.fullName || 'Member',
+                      avatarUrl: resolveUrl(post.user?.avatar) || 'https://i.pravatar.cc/100',
+                      handle: club.slug || 'member',
+                      verified: post.user?.role === 'CLUB_HEADER'
                     },
-                    imageUrl: [
-                      club.image,
-                      'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=1200&q=80',
-                      'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
-                    ][idx % 3]
+                    imageUrl: resolveUrl(post.imageUrl || (post.imageUrls && post.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90'
                   }} 
                   width={width} 
                 />
-             ))}
+             )) : (
+              <Text style={styles.emptyText}>No posts yet.</Text>
+             )}
           </View>
         );
       case 'EVENTS':
         return (
           <View style={styles.tabPane}>
-             <EventCard item={{
-                id: 'e1',
-                imageUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80',
-                day: '12',
-                month: 'APR',
-                category: 'GAMING',
-                title: 'BGMI Mega Tournament 2026',
-                subtitle: 'Join us for the ultimate campus showdown.',
-                location: 'MAIN AUDITORIUM',
-                time: '4:45 PM',
-                registered: true
-             }} />
-             <EventCard item={{
-                id: 'e2',
-                imageUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=800&q=80',
-                day: '19',
-                month: 'APR',
-                category: 'TECH',
-                title: 'AI Workshop & Lan Party',
-                subtitle: 'Deep dive into LLMs and network with mods.',
-                location: 'LAB B4 HALL',
-                time: '10:00 AM',
-                registered: false
-             }} />
+             {liveEvents.length > 0 ? liveEvents.map((ev) => (
+               <EventCard key={ev.id} item={{
+                  id: ev.id,
+                  imageUrl: resolveUrl(ev.imageUrl) || resolveUrl(club.image) || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80',
+                  day: ev.date ? new Date(ev.date).getDate() : '??',
+                  month: ev.date ? new Date(ev.date).toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '??',
+                  category: club.name.toUpperCase(),
+                  title: ev.title,
+                  subtitle: ev.description || '',
+                  location: ev.venue || 'CAMPUS',
+                  time: ev.date ? new Date(ev.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '4:45 PM',
+                  registered: false
+               }} />
+             )) : (
+               <Text style={styles.emptyText}>No upcoming events found.</Text>
+             )}
           </View>
         );
       case 'GIGS':
         return (
           <View style={styles.tabPane}>
-             <View style={styles.gigCard}>
-                <View style={styles.gigCardHeader}>
-                   <View style={styles.gigBadge}>
-                      <Text style={styles.gigBadgeText}>GIG OPPORTUNITY</Text>
-                   </View>
-                   <Text style={styles.gigDeadline}>ENDS 01 MAY</Text>
-                </View>
-                
-                <Text style={styles.gigCardTitle}>Opportunity for {club.name} Content Creators</Text>
-                <Text style={styles.gigCardSub}>Love creating reels or aesthetic content? Join our production team and grow your audience with us.</Text>
-                
-                <View style={styles.gigFooter}>
-                   <View>
-                      <Text style={styles.gigPayLabel}>STIPEND / PAY</Text>
-                      <Text style={styles.gigPayValue}>₹2,500 - ₹5,000</Text>
-                   </View>
-                   <TouchableOpacity style={styles.applyBtn} activeOpacity={0.8}>
-                      <Text style={styles.applyBtnText}>APPLY NOW</Text>
-                   </TouchableOpacity>
-                </View>
-             </View>
-
-             <View style={styles.gigCard}>
-                <View style={styles.gigCardHeader}>
-                   <View style={[styles.gigBadge, { backgroundColor: '#FFEDD5'}]}>
-                      <Text style={[styles.gigBadgeText, { color: '#F97316' }]}>URGENT HIRING</Text>
-                   </View>
-                   <Text style={styles.gigDeadline}>ENDS 28 APR</Text>
-                </View>
-                
-                <Text style={styles.gigCardTitle}>Event Coordinator & Ops</Text>
-                <Text style={styles.gigCardSub}>Help us manage the upcoming mega showcase. Experience in crowd control or stage ops preferred.</Text>
-                
-                <View style={styles.gigFooter}>
-                   <View>
-                      <Text style={styles.gigPayLabel}>STIPEND / PAY</Text>
-                      <Text style={styles.gigPayValue}>₹8,000 - ₹12,000</Text>
-                   </View>
-                   <TouchableOpacity style={styles.applyBtn} activeOpacity={0.8}>
-                      <Text style={styles.applyBtnText}>APPLY NOW</Text>
-                   </TouchableOpacity>
-                </View>
-             </View>
+             {liveGigs.length > 0 ? liveGigs.map((gig) => (
+               <View key={gig.id} style={styles.gigCard}>
+                  <View style={styles.gigCardHeader}>
+                     <View style={styles.gigBadge}>
+                        <Text style={styles.gigBadgeText}>{gig.category || 'GIG OPPORTUNITY'}</Text>
+                     </View>
+                     <Text style={styles.gigDeadline}>ENDS {gig.deadline ? new Date(gig.deadline).toLocaleDateString('en-US', { day: '2-digit', month: 'short' }).toUpperCase() : '01 MAY'}</Text>
+                  </View>
+                  
+                  <Text style={styles.gigCardTitle}>{gig.title}</Text>
+                  <Text style={styles.gigCardSub}>{gig.description}</Text>
+                  
+                  <View style={styles.gigFooter}>
+                     <View>
+                        <Text style={styles.gigPayLabel}>STIPEND / PAY</Text>
+                        <Text style={styles.gigPayValue}>
+                           {gig.payMin && gig.payMax 
+                             ? `₹${gig.payMin.toLocaleString('en-IN')} - ₹${gig.payMax.toLocaleString('en-IN')}` 
+                             : (gig.stipend || 'Competitive')}
+                        </Text>
+                     </View>
+                     <TouchableOpacity style={styles.applyBtn} activeOpacity={0.8}>
+                        <Text style={styles.applyBtnText}>APPLY NOW</Text>
+                     </TouchableOpacity>
+                  </View>
+               </View>
+             )) : (
+              <Text style={styles.emptyText}>No active gigs for this club.</Text>
+             )}
           </View>
         );
       default:
@@ -227,16 +270,13 @@ export function ClubDetailModal({
     <Modal visible={visible} animationType="slide" transparent statusBarTranslucent>
       <View style={styles.modalBg}>
         <View style={styles.sheet}>
-          {/* BACK ACTION ON LEFT */}
           <TouchableOpacity style={styles.backBtn} onPress={onClose}>
             <Ionicons name="arrow-back" size={24} color="#000" />
           </TouchableOpacity>
 
           <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-            {/* BRANDED HERO CARD SECTION */}
             <View style={styles.heroCardContainer}>
               <View style={styles.heroCard}>
-                {/* Official Tag */}
                 <View style={styles.officialHeader}>
                   <View style={styles.iconCircle}>
                      <Ionicons name="game-controller" size={14} color="#7C3AED" />
@@ -244,16 +284,14 @@ export function ClubDetailModal({
                   <Text style={styles.officialText}>OFFICIAL CLUB</Text>
                 </View>
 
-                {/* Title */}
                 <Text style={styles.clubTitle}>{club.name}</Text>
                 
-                {/* Expandable Description */}
                 <View>
                   <Text 
                     style={styles.clubDesc} 
                     numberOfLines={showFullDesc ? undefined : 2}
                   >
-                    {club.description} प्रोवाइडिंग मेंबर्स विथ ऑपच्र्युनिटीज टो कॉम्पीटे, शोकेस देर स्किल्स, एंड कनेक्ट विथ फेलो गेमर्स. BGMI E-FOOTBALL Free-Fire {club.description}
+                    {club.description}
                   </Text>
                   <TouchableOpacity 
                     onPress={() => setShowFullDesc(!showFullDesc)}
@@ -265,7 +303,6 @@ export function ClubDetailModal({
 
                 <View style={styles.divider} />
 
-                {/* Status Row */}
                 <View style={styles.statusRow}>
                    <View style={styles.membersRow}>
                       <View style={styles.avatarStack}>
@@ -278,8 +315,10 @@ export function ClubDetailModal({
                            </View>
                          ))}
                       </View>
-                      <Text style={styles.memberCountText}>{club.eliteCount * 42} MEMBERS ACTIVE</Text>
-                   </View>
+                       <Text style={styles.memberCountText}>
+                         {displayClubMembers(club.id, club.memberCount || 0, club.memberDisplayBase, club.slug).toLocaleString('en-IN')} MEMBERS ACTIVE
+                       </Text>
+                    </View>
 
                    <TouchableOpacity style={styles.memberStatusBtn} activeOpacity={0.8}>
                       <Text style={styles.memberStatusText}>MEMBER </Text>
@@ -287,12 +326,10 @@ export function ClubDetailModal({
                    </TouchableOpacity>
                 </View>
 
-                {/* Decoration background title */}
                 <Text style={styles.bgTitleText} numberOfLines={1}>{club.name.split(' ')[0]} {"\n"} CLUB</Text>
               </View>
             </View>
 
-            {/* TAB SYSTEM */}
             <View style={styles.tabBar}>
                {(['FEED', 'EVENTS', 'GIGS'] as TabKey[]).map((tab) => (
                  <TouchableOpacity 
@@ -306,7 +343,6 @@ export function ClubDetailModal({
                ))}
             </View>
 
-            {/* TAB CONTENT */}
             {renderTabContent()}
           </ScrollView>
         </View>
@@ -323,13 +359,13 @@ const styles = StyleSheet.create({
   },
   heroCardContainer: {
     padding: 20,
-    paddingTop: 60, // Account for full-page header info
+    paddingTop: 60,
   },
   heroCard: {
     backgroundColor: '#FFF',
     borderRadius: 30,
     padding: 24,
-    paddingBottom: 20, // Tighter finish
+    paddingBottom: 20,
     position: 'relative',
     overflow: 'hidden',
     shadowColor: '#000',
@@ -445,7 +481,6 @@ const styles = StyleSheet.create({
     zIndex: -1,
     textTransform: 'uppercase',
   },
-  
   tabBar: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -476,15 +511,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#7C3AED',
     borderRadius: 3,
   },
-  
   tabPane: {
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 40,
     gap: 20,
   },
-  
-  // High-Fidelity Event Card
   eventCard: {
     backgroundColor: '#FFF',
     borderRadius: 24,
@@ -519,7 +551,6 @@ const styles = StyleSheet.create({
   },
   eventDay: { fontSize: 18, fontWeight: '900', color: '#0F172A' },
   eventMonth: { fontSize: 10, fontWeight: '900', color: '#64748B' },
-  
   eventBody: {
     padding: 20,
   },
@@ -534,7 +565,6 @@ const styles = StyleSheet.create({
   eventCatText: { fontSize: 10, fontWeight: '900', color: '#7C3AED', letterSpacing: 0.5 },
   eventTitleText: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 6 },
   eventSubText: { fontSize: 13, color: '#64748B', lineHeight: 20, marginBottom: 16 },
-  
   eventInfoRow: {
     flexDirection: 'row',
     gap: 12,
@@ -552,7 +582,6 @@ const styles = StyleSheet.create({
     borderColor: '#F1F5F9',
   },
   eventPillText: { fontSize: 11, fontWeight: '700', color: '#64748B' },
-  
   eventFooterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -574,7 +603,6 @@ const styles = StyleSheet.create({
   },
   regBtnText: { color: '#FFF', fontSize: 12, fontWeight: '900' },
   regBtnTextActive: { color: '#7C3AED' },
-  
   gigCard: {
     backgroundColor: '#FFF',
     borderRadius: 24,
@@ -620,68 +648,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   applyBtnText: { color: '#FFF', fontSize: 12, fontWeight: '900' },
-  
-  // Related Content Styles
-  relatedSection: {
-    marginTop: 10,
-    marginBottom: 20,
-  },
-  sectionHeading: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: 1.5,
-    marginBottom: 16,
-    opacity: 0.8,
-  },
-  relatedScroll: {
-    gap: 12,
-  },
-  relatedCard: {
-    width: 140,
-    height: 180,
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: '#F1F5F9',
-  },
-  relatedImg: {
-    width: '100%',
-    height: '100%',
-  },
-  relatedGradient: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '50%',
-    justifyContent: 'flex-end',
-    padding: 12,
-  },
-  relatedName: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  
-  momentsSection: {
-    marginBottom: 30,
-  },
-  momentsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  momentImg: {
-    width: (width - 50) / 2,
-    height: (width - 50) / 2,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-  },
-
   backBtn: {
     position: 'absolute',
-    top: 50, // Safe area top
+    top: 50,
     left: 20,
     width: 44,
     height: 44,
@@ -695,5 +664,12 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
     zIndex: 100,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#94A3B8',
+    fontSize: 14,
+    paddingVertical: 40,
+    fontFamily: 'InterSemi',
   },
 });

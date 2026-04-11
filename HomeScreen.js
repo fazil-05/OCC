@@ -210,7 +210,7 @@ const HomeScreen = () => {
             onPress={() => setActiveTab(tab.name)}
           >
             <Ionicons
-              name={activeTab === tab.name ? (tab.icon as any) : (`${tab.icon}-outline` as any)}
+              name={activeTab === tab.name ? tab.icon : `${tab.icon}-outline`}
               size={tab.isCenter ? 40 : 24}
               color={tab.isCenter ? '#1D3D47' : activeTab === tab.name ? '#1D3D47' : '#999'}
             />

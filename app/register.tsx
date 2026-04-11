@@ -24,7 +24,7 @@ const { width } = Dimensions.get('window');
 export default function RegisterScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { register } = useAuth();
+  const { register, signInWithGoogle } = useAuth();
   
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -55,16 +55,27 @@ export default function RegisterScreen() {
 
   const onRegister = async () => {
     if (busy) return;
+    if (!fullName || !email || !password || !referralCode) {
+      alert('Please fill all required fields including the club referral code.');
+      return;
+    }
     setBusy(true);
-    // UI-only registration (requires collegeName per type)
-    await register({
+    const result = await register({
       fullName,
       email,
       password,
       confirmPassword,
-      collegeName: 'Your College', // Placeholder as it's required by payload
+      collegeName: 'Your College', 
+      phoneNumber: '0000000000', // Placeholder or add input
+      referralCode,
+      otp: otp.join(''),
     });
-    router.replace('/(tabs)/home');
+    
+    if (result.success) {
+      router.replace('/(tabs)/home');
+    } else {
+      alert(result.error);
+    }
     setBusy(false);
   };
 
@@ -105,7 +116,20 @@ export default function RegisterScreen() {
           </View>
 
           {/* Google Register */}
-          <TouchableOpacity style={styles.googleBtn} activeOpacity={0.8}>
+          <TouchableOpacity 
+            style={styles.googleBtn} 
+            activeOpacity={0.8}
+            onPress={async () => {
+              setBusy(true);
+              try {
+                await signInWithGoogle('register');
+              } catch (err) {
+                alert('Google Sign-In failed. Please try again.');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
             <Ionicons name="logo-google" size={20} color="#EA4335" />
             <Text style={styles.googleBtnText}>Sign up with Google</Text>
           </TouchableOpacity>

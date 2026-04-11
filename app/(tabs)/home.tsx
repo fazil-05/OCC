@@ -39,7 +39,8 @@ import {
   MOCK_TRENDING_CARDS,
   MOCK_TRENDING_ROWS,
 } from '@/constants/occ-mock-feed';
-import { useAuth } from '@/context/auth-context';
+import { useAuth, authHeaders, API_URL, resolveUrl } from '@/context/auth-context';
+import { usePusherChannel } from '@/hooks/usePusher';
 import { useScroll } from '@/context/ScrollContext';
 import Animated, {
   Extrapolate,
@@ -61,36 +62,26 @@ const STEP = CARD_W + CARD_GAP;
 // Left/right padding so the active card is perfectly centered on screen
 const SIDE_PAD = (width - CARD_W) / 2;
 
-// Infinite-loop: render 3 copies.
-// Start in the middle copy so there's room to loop both directions.
-const LOOPED_CARDS = [
-  ...MOCK_TRENDING_CARDS,
-  ...MOCK_TRENDING_CARDS,
-  ...MOCK_TRENDING_CARDS,
-];
-
-// Pre-compute exact snap offsets so every card lands perfectly centred.
-// snapToOffsets is more reliable than snapToInterval for centred layouts.
-const SNAP_OFFSETS = LOOPED_CARDS.map((_, i) => i * STEP);
-
 type FeedTab = 'forYou' | 'following' | 'all';
 
 function TrendingClubCard({
   c,
   index,
   scrollX,
+  step,
   onPress,
 }: {
   c: any;
   index: number;
   scrollX: any;
+  step: number;
   onPress: (club: any) => void;
 }) {
   const animatedStyle = useAnimatedStyle(() => {
     const inputRange = [
-      (index - 1) * STEP,
-      index * STEP,
-      (index + 1) * STEP,
+      (index - 1) * step,
+      index * step,
+      (index + 1) * step,
     ];
 
     const scale = interpolate(
@@ -114,11 +105,14 @@ function TrendingClubCard({
     return { transform: [{ scale }], zIndex, opacity };
   });
 
+  const memberCount = displayClubMembers(c.id, c.memberCount || 0, c.memberDisplayBase);
+  const memberLabel = `${memberCount.toLocaleString('en-IN')} MEMBERS`;
+
   return (
     <Animated.View style={[styles.trendCard, animatedStyle]}>
       <Pressable onPress={() => onPress(c)} style={{ flex: 1 }}>
         <ImageBackground
-          source={{ uri: c.coverUrl }}
+          source={{ uri: resolveUrl(c.coverImage || c.imageUrl) || getFallbackImage(c.slug) }}
           style={styles.trendImageBackground}
           imageStyle={{ borderRadius: 24 }}
         >
@@ -128,7 +122,7 @@ function TrendingClubCard({
           >
             <View style={styles.trendInfoBox}>
               <Text style={styles.trendName}>{c.name}</Text>
-              <Text style={styles.trendMeta}>{c.memberLabel}</Text>
+              <Text style={styles.trendMeta}>{memberLabel}</Text>
               <TouchableOpacity activeOpacity={0.8} style={styles.joinCluster}>
                 <Text style={styles.joinClusterText}>+ JOIN CLUB</Text>
               </TouchableOpacity>
@@ -140,9 +134,42 @@ function TrendingClubCard({
   );
 }
 
+// --- Social Display Logic (Mirrored from Backend) ---
+const dummySocialSeed = (entityId: string, salt: string) => {
+  let h = 2166136261;
+  const s = `${salt}:${entityId}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 1 + (Math.abs(h) % 799);
+};
+
+const displayClubMembers = (clubId: string, realMembers: number, storedBase?: number | null) => {
+  const base = (storedBase != null && storedBase >= 100 && storedBase < 800)
+    ? storedBase
+    : dummySocialSeed(clubId, "club-followers");
+  return base + Math.max(0, realMembers);
+};
+
+const displayPostLikes = (postId: string, realLikes: number) => {
+  return dummySocialSeed(postId, "post-likes") + Math.max(0, realLikes);
+};
+
+const getFallbackImage = (slug: string) => {
+  const s = (slug || '').toUpperCase();
+  if (s.includes('SPORT') || s.includes('FITNESS')) return 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('MUSIC')) return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('DESIGN') || s.includes('FASHION')) return 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('TECH') || s.includes('CODE') || s.includes('DEV')) return 'https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('PHOTO') || s.includes('LENS')) return 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('BIKE') || s.includes('RIDER') || s.includes('MOTOR')) return 'https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=800&auto=format&fit=crop&w=800&q=80';
+  return 'https://images.unsplash.com/photo-1529156069898-49953eb1b5ce?w=800&auto=format&fit=crop&q=80';
+};
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, token, ready } = useAuth();
   const { handleScroll, handleScrollEnd } = useScroll();
 
   const [montserratLoaded] = useMontserrat({ Montserrat_900Black });
@@ -152,8 +179,7 @@ export default function HomeScreen() {
   const [feedTab, setFeedTab] = useState<FeedTab>('forYou');
   const scrollX = useSharedValue(0);
   const scrollViewRef = useRef<Animated.ScrollView>(null);
-  // Start index points at index 0 of the middle copy
-  const currentIndex = useRef(MOCK_TRENDING_CARDS.length);
+  const currentIndex = useRef(0);
 
   // ── Must be declared at the top level of the component, NOT inline in JSX ──
   const onCarouselScroll = useAnimatedScrollHandler((event) => {
@@ -167,6 +193,118 @@ export default function HomeScreen() {
 
   const [selectedClubData, setSelectedClubData] = useState<any>(null);
   const [clubModalVisible, setClubModalVisible] = useState(false);
+
+  const [livePosts, setLivePosts] = useState<any[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [liveClubs, setLiveClubs] = useState<any[]>([]);
+
+  // Infinite Scroll Helpers for Carousel
+  const loopedClubs = liveClubs.length > 0 ? [...liveClubs, ...liveClubs, ...liveClubs] : [];
+  const snapOffsets = loopedClubs.map((_, i) => i * STEP);
+
+  // REALTIME POSTS FEED PIPELINE
+  // We extract all Club IDs the user is part of + global feed node
+  const clubSubChannels = [
+    'global-posts',
+    ...(user?.memberships || []).map((m: any) => `club-${m.clubId}`)
+  ];
+
+  usePusherChannel(clubSubChannels, 'new-post', (payload) => {
+    console.log('[WEBSOCKET] Real-time New Post Dropped!', payload);
+    fetchLivePosts(feedTab); // Instantly silently inject the feed
+  });
+
+  const fetchLivePosts = async (tab: FeedTab) => {
+    setLoadingPosts(true);
+    try {
+      // Determine endpoint based on tab
+      // 'all' uses explore/posts
+      // 'following' or 'forYou' uses the general posts endpoint
+      const endpoint = tab === 'all' ? `${API_URL}/api/explore/posts` : `${API_URL}/api/posts`;
+      
+      const res = await fetch(endpoint, {
+        headers: authHeaders(token)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.posts) {
+          const formatted = data.posts.map((p: any) => ({
+            id: p.id,
+            author: { 
+              name: p.user?.fullName || 'User', 
+              avatarUrl: resolveUrl(p.user?.avatar) || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80',
+              verified: p.user?.role === 'CLUB_HEADER' || p.user?.role === 'ADMIN',
+              handle: p.club?.slug || p.user?.fullName?.split(' ')[0].toLowerCase() || 'member'
+            },
+            timeLabel: p.createdAt ? 'now' : '2h', // Simplification, could use date-fns
+            imageUrl: resolveUrl(p.imageUrl || (p.imageUrls && p.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90',
+            caption: p.caption || p.content || '',
+            likes: displayPostLikes(p.id, p.likesCount || 0),
+            comments: p.comments?.length || p.commentsCount || 0,
+          }));
+          setLivePosts(formatted);
+        }
+      } else {
+        console.log('Posts fetch failed:', res.status);
+      }
+    } catch (err) {
+      console.log('Error fetching live posts:', err);
+    } finally {
+      setLoadingPosts(false);
+    }
+  };
+
+  const [liveEvents, setLiveEvents] = useState<any[]>([]);
+
+  const fetchLiveEvents = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/events`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.events) {
+          setLiveEvents(data.events.map((e: any) => ({
+            id: e.id,
+            title: e.title,
+            clubName: e.club?.name || 'OCC Club',
+            dateLabel: e.date ? new Date(e.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Soon',
+            imageUrl: resolveUrl(e.imageUrl) || resolveUrl(e.club?.coverImage) || 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=90',
+            description: e.description || '',
+            location: e.location || 'Campus venue',
+            attendees: e._count?.registrations || 42,
+          })));
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching events:', err);
+    }
+  };
+
+  const fetchLiveClubs = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/clubs`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.clubs) {
+          setLiveClubs(data.clubs);
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching live clubs:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (ready) {
+      fetchLivePosts(feedTab);
+      fetchLiveEvents();
+      fetchLiveClubs();
+    }
+  }, [feedTab, ready]);
 
   useEffect(() => {
     if (montserratLoaded && interLoaded) {
@@ -231,8 +369,11 @@ export default function HomeScreen() {
 
   // ── Infinite auto-scroll ──────────────────────────────────────────────────
   useEffect(() => {
-    const TOTAL = MOCK_TRENDING_CARDS.length;
+    if (liveClubs.length === 0) return;
+
+    const TOTAL = liveClubs.length;
     const startX = TOTAL * STEP;
+    currentIndex.current = TOTAL;
 
     // Silently jump to the middle copy on mount
     scrollViewRef.current?.scrollTo({ x: startX, animated: false });
@@ -261,13 +402,16 @@ export default function HomeScreen() {
     }, 4000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [liveClubs.length]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await new Promise((r) => setTimeout(r, 450));
+    await Promise.all([
+      fetchLivePosts(feedTab),
+      fetchLiveEvents()
+    ]);
     setRefreshing(false);
-  }, []);
+  }, [feedTab]);
 
   // If fonts aren't ready, show nothing (Splash screen stays visible)
   // MOVED AFTER HOOKS to prevent Render Error
@@ -334,19 +478,20 @@ export default function HomeScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             decelerationRate="fast"
-            snapToOffsets={SNAP_OFFSETS}
+            snapToOffsets={snapOffsets}
             snapToAlignment="center"
             scrollEventThrottle={16}
             onScroll={onCarouselScroll}
             style={styles.trendingScrollView}
             contentContainerStyle={styles.trendingHScroll}
           >
-            {LOOPED_CARDS.map((c, index) => (
+            {loopedClubs.map((c, index) => (
               <TrendingClubCard
                 key={`${c.id}-${index}`}
                 c={c}
                 index={index}
                 scrollX={scrollX}
+                step={STEP}
                 onPress={handleOpenClub}
               />
             ))}
@@ -369,7 +514,7 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         <View style={{ paddingHorizontal: PAD, gap: 12, backgroundColor: '#FFFFFF' }}>
-          {MOCK_EVENTS.map((ev) => (
+          {liveEvents.length > 0 ? liveEvents.slice(0, 3).map((ev) => (
             <Pressable
               key={ev.id}
               onPress={() => handleOpenEvent(ev)}
@@ -384,7 +529,11 @@ export default function HomeScreen() {
                 <Text style={styles.eventWhen}>{ev.dateLabel}</Text>
               </View>
             </Pressable>
-          ))}
+          )) : !loadingPosts && (
+            <View style={{ paddingVertical: 20 }}>
+              <Text style={{ textAlign: 'center', color: dash.textSoft, fontSize: 13 }}>No upcoming events found.</Text>
+            </View>
+          )}
         </View>
 
         {/* Club Types */}
@@ -398,18 +547,18 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         <View style={{ paddingHorizontal: PAD, gap: 4 }}>
-          {MOCK_TRENDING_ROWS.map((row) => (
+          {liveClubs.slice(0, 6).map((club) => (
             <TouchableOpacity
-              key={row.id}
-              onPress={() => handleOpenCategory(row.name)}
+              key={club.id}
+              onPress={() => handleOpenClub(club)}
               style={styles.trendRow}
             >
-              <Image source={{ uri: row.avatarUrl }} style={styles.trendRowAvatar} />
+              <Image source={{ uri: resolveUrl(club.icon || club.coverImage) || 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=90' }} style={styles.trendRowAvatar} />
               <View style={{ flex: 1 }}>
                 <View style={styles.trendRowName}>
-                  <Text style={styles.trendRowTitle}>{row.name}</Text>
+                  <Text style={styles.trendRowTitle}>{club.name}</Text>
                 </View>
-                <Text style={styles.trendRowMeta}>Explore this category</Text>
+                <Text style={styles.trendRowMeta}>{displayClubMembers(club.id, club.memberCount || 0, club.memberDisplayBase).toLocaleString('en-IN')} MEMBERS</Text>
               </View>
               <View style={styles.joinSmall}>
                 <Text style={styles.joinSmallText}>Open</Text>
@@ -457,7 +606,7 @@ export default function HomeScreen() {
         </Text>
 
         <View style={{ marginTop: 8 }}>
-          {MOCK_FEED_POSTS.map((post) => (
+          {livePosts.map((post) => (
             <FeedPostCard key={post.id} post={post} width={width} />
           ))}
         </View>

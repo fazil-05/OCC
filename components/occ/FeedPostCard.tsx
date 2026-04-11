@@ -39,6 +39,11 @@ export function FeedPostCard({ post, width }: Props) {
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<Comment[]>([]);
 
+  // Keep internal state in sync with incoming real-time props!
+  React.useEffect(() => {
+    setLikeCount(post.likes);
+  }, [post.likes]);
+
   // Double tap logic
   const lastTap = useRef(0);
   const heartScale = useRef(new Animated.Value(0)).current;

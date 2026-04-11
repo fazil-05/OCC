@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useScroll } from '@/context/ScrollContext';
+import { useAuth, authHeaders, API_URL, resolveUrl } from '@/context/auth-context';
 
 const { width } = Dimensions.get('window');
 
@@ -34,7 +35,10 @@ type Club = {
   category: string;
   description: string;
   image: string;
-  eliteCount: number;
+  memberCount?: number;
+  memberDisplayBase?: number | null;
+  slug?: string;
+  eliteCount?: number;
 };
 
 const CLUBS_DATA: Club[] = [
@@ -119,14 +123,82 @@ function BannerCarousel() {
   );
 }
 
+const getFallbackImage = (slug: string) => {
+  const s = slug.toUpperCase();
+  if (s.includes('SPORT') || s.includes('FITNESS')) return 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('MUSIC')) return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('DESIGN') || s.includes('FASHION')) return 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('TECH') || s.includes('CODE') || s.includes('DEV')) return 'https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('PHOTO') || s.includes('LENS')) return 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?w=800&auto=format&fit=crop&q=80';
+  if (s.includes('BIKE') || s.includes('RIDER') || s.includes('MOTOR')) return 'https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=800&auto=format&fit=crop&q=80';
+  return 'https://images.unsplash.com/photo-1529156069898-49953eb1b5ce?w=800&auto=format&fit=crop&q=80'; // Generic dynamic crowd
+};
+
+const dummySocialSeed = (entityId: string, salt: string) => {
+  let h = 2166136261;
+  const s = `${salt}:${entityId}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 1 + (Math.abs(h) % 799);
+};
+
+const displayClubMembers = (clubId: string, realMembers: number, storedBase?: number | null) => {
+  const base = (storedBase != null && storedBase >= 100 && storedBase < 800)
+    ? storedBase
+    : dummySocialSeed(clubId, "club-followers");
+  return base + Math.max(0, realMembers);
+};
+
 export default function ClubsPage() {
   const insets = useSafeAreaInsets();
   const { handleScroll, handleScrollEnd } = useScroll();
+  const { token, ready } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState('ALL CLUBS');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedClub, setSelectedClub] = useState<Club | null>(null);
+  const [selectedClub, setSelectedClub] = useState<any | null>(null);
+  const [clubs, setClubs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const filteredClubs = CLUBS_DATA.filter((club) => {
+  const fetchClubs = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/clubs`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.clubs) {
+          setClubs(data.clubs.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            category: c.slug.toUpperCase().includes('SPORT') ? 'ELITE SPORTS' : 
+                      c.slug.toUpperCase().includes('MUSIC') ? 'GLOBAL MUSIC' : 
+                      c.slug.toUpperCase().includes('DESIGN') ? 'ART & DESIGN' : 
+                      c.slug.toUpperCase().includes('TECH') ? 'TECHNOLOGY' : 'COMMUNITY',
+            description: c.description || '',
+            image: resolveUrl(c.coverImage) || getFallbackImage(c.slug),
+            memberCount: c.memberCount || 0,
+            memberDisplayBase: c.memberDisplayBase,
+            slug: c.slug
+          })));
+        }
+      }
+    } catch (err) {
+      console.log('Error fetching clubs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ready) {
+      fetchClubs();
+    }
+  }, [ready]);
+
+  const filteredClubs = clubs.filter((club) => {
     const matchesCategory = selectedCategory === 'ALL CLUBS' || club.category === selectedCategory;
     const matchesSearch = club.name.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
@@ -180,7 +252,9 @@ export default function ClubsPage() {
                 <Image source={{ uri: club.image }} style={styles.cardImage} contentFit="cover" />
                 <View style={styles.eliteBadge}>
                   <View style={styles.eliteDot} />
-                  <Text style={styles.eliteBadgeText}>{club.eliteCount} ELITE</Text>
+                  <Text style={styles.eliteBadgeText}>
+                    {displayClubMembers(club.id, club.memberCount || 0, club.memberDisplayBase).toLocaleString('en-IN')} MEMBERS
+                  </Text>
                 </View>
                 <LinearGradient colors={['transparent', 'rgba(0,0,0,0.85)']} style={styles.cardGradient}>
                   <Text style={styles.clubName}>{club.name}</Text>
