@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -48,11 +48,39 @@ const MOCK_MESSAGES = [
 ];
 
 export default function NotificationsScreen() {
-  const [activeTab, setActiveTab ] = useState<'announcements' | 'social'>('announcements');
+  const [activeTab, setActiveTab ] = useState<'announcements' | 'social'>('social'); // Default to social per request
   const router = useRouter();
   const { token, ready } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  const fetchUsers = async (q: string) => {
+    if (q.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/users/search?q=${q}`, {
+        headers: authHeaders(token)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.users || []);
+      }
+    } catch (err) {
+      console.log('Search error:', err);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery) fetchUsers(searchQuery);
+      else setSearchResults([]);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const fetchNotifications = async () => {
     setLoading(true);
@@ -145,27 +173,73 @@ export default function NotificationsScreen() {
               </View>
             )
           ) : (
-            MOCK_MESSAGES.map((item) => (
-              <TouchableOpacity 
-                key={item.id} 
-                activeOpacity={0.9}
-                onPress={() => navigateTo(`/chat/${item.id}`, { name: item.user, avatar: item.avatar })}
-                style={styles.messageRow}
-              >
-                <View style={styles.avatarContainer}>
-                  <Image source={{ uri: item.avatar }} style={styles.userAvatar} />
-                  {item.online && <View style={styles.onlineBadge} />}
+            <View>
+              {/* User Search Bar */}
+              <View style={styles.searchContainer}>
+                <Ionicons name="search" size={20} color={dash.textMuted} style={styles.searchIcon} />
+                <TextInput 
+                  placeholder="Find someone to chat with..." 
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholderTextColor={dash.textSoft}
+                  style={styles.searchInput}
+                />
+              </View>
+
+              {searchQuery.length > 0 ? (
+                <View style={styles.resultsList}>
+                  <Text style={styles.sectionLabel}>Search Results</Text>
+                  {searchResults.map((user) => (
+                    <TouchableOpacity 
+                      key={user.id} 
+                      activeOpacity={0.9}
+                      onPress={() => navigateTo(`/chat/${user.id}`, { name: user.fullName, avatar: user.avatar })}
+                      style={styles.messageRow}
+                    >
+                      <View style={styles.avatarContainer}>
+                        <Image source={{ uri: user.avatar || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80' }} style={styles.userAvatar} />
+                      </View>
+                      <View style={styles.messageContent}>
+                        <View style={styles.messageHeader}>
+                          <Text style={styles.userName}>{user.fullName}</Text>
+                          <Text style={styles.messageTime}>{user.collegeName}</Text>
+                        </View>
+                        <Text style={styles.messageBody} numberOfLines={1}>Tap to start chatting</Text>
+                      </View>
+                      <Ionicons name="chatbubbles-outline" size={18} color={dash.purple} />
+                    </TouchableOpacity>
+                  ))}
+                  {searchResults.length === 0 && searchQuery.length >= 2 && (
+                    <Text style={styles.noResultsText}>No users found for "{searchQuery}"</Text>
+                  )}
                 </View>
-                <View style={styles.messageContent}>
-                  <View style={styles.messageHeader}>
-                    <Text style={styles.userName}>{item.user}</Text>
-                    <Text style={styles.messageTime}>{item.time}</Text>
-                  </View>
-                  <Text style={styles.messageBody} numberOfLines={1}>{item.body}</Text>
+              ) : (
+                <View>
+                  <Text style={styles.sectionLabel}>Recent Conversations</Text>
+                  {MOCK_MESSAGES.map((item) => (
+                    <TouchableOpacity 
+                      key={item.id} 
+                      activeOpacity={0.9}
+                      onPress={() => navigateTo(`/chat/${item.id}`, { name: item.user, avatar: item.avatar })}
+                      style={styles.messageRow}
+                    >
+                      <View style={styles.avatarContainer}>
+                        <Image source={{ uri: item.avatar }} style={styles.userAvatar} />
+                        {item.online && <View style={styles.onlineBadge} />}
+                      </View>
+                      <View style={styles.messageContent}>
+                        <View style={styles.messageHeader}>
+                          <Text style={styles.userName}>{item.user}</Text>
+                          <Text style={styles.messageTime}>{item.time}</Text>
+                        </View>
+                        <Text style={styles.messageBody} numberOfLines={1}>{item.body}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
+                    </TouchableOpacity>
+                  ))}
                 </View>
-                <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
-              </TouchableOpacity>
-            ))
+              )}
+            </View>
           )}
 
           <View style={styles.footerInfo}>
@@ -283,4 +357,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748B',
   },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4FB',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    height: 52,
+    marginBottom: 20,
+    gap: 12,
+  },
+  searchIcon: {
+    opacity: 0.6,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: 'InterSemi',
+    fontSize: 15,
+    color: '#0F172A',
+  },
+  sectionLabel: {
+    fontFamily: 'InterBold',
+    fontSize: 10,
+    color: '#94A3B8',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  resultsList: {
+    gap: 12,
+  },
+  noResultsText: {
+    textAlign: 'center',
+    color: '#94A3B8',
+    fontFamily: 'InterSemi',
+    marginTop: 20,
+  }
 });

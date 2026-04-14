@@ -176,7 +176,7 @@ export default function HomeScreen() {
   const [interLoaded] = useInter({ Inter_600SemiBold, Inter_700Bold });
 
   const [refreshing, setRefreshing] = useState(false);
-  const [feedTab, setFeedTab] = useState<FeedTab>('forYou');
+  const [feedTab, setFeedTab] = useState<FeedTab>('all');
   const scrollX = useSharedValue(0);
   const scrollViewRef = useRef<Animated.ScrollView>(null);
   const currentIndex = useRef(0);
@@ -553,7 +553,7 @@ export default function HomeScreen() {
               onPress={() => handleOpenClub(club)}
               style={styles.trendRow}
             >
-              <Image source={{ uri: resolveUrl(club.icon || club.coverImage) || 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=90' }} style={styles.trendRowAvatar} />
+              <Image source={{ uri: resolveUrl(club.coverImage || club.icon) || 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=90' }} style={styles.trendRowAvatar} />
               <View style={{ flex: 1 }}>
                 <View style={styles.trendRowName}>
                   <Text style={styles.trendRowTitle}>{club.name}</Text>

@@ -46,7 +46,8 @@ type Club = {
   name: string;
   category: string;
   description: string;
-  image: string;
+  image?: string;
+  coverImage?: string;
   eliteCount?: number;
   memberCount?: number;
   memberDisplayBase?: number | null;
@@ -130,6 +131,11 @@ export function ClubDetailModal({
     
     const fetchClubData = async () => {
       setLoading(true);
+      // Clear previous data while fetching new
+      setLivePosts([]);
+      setLiveEvents([]);
+      setLiveGigs([]);
+      
       try {
         const [postsRes, gigsRes, eventsRes] = await Promise.all([
           fetch(`${API_URL}/api/posts?clubId=${club.id}`, { headers: authHeaders(token) }),
@@ -139,15 +145,26 @@ export function ClubDetailModal({
 
         if (postsRes.ok) {
           const d = await postsRes.json();
-          setLivePosts(d.posts || []);
+          // Filter by ID or Slug for fallback support
+          const rawPosts = d.posts || [];
+          const filteredPosts = rawPosts.filter((p: any) => 
+            p.clubId === club.id || (p.club && p.club.slug === club.slug)
+          );
+          setLivePosts(filteredPosts.length > 0 ? filteredPosts : rawPosts.slice(0, 0)); // Keep empty if no match
         }
         if (gigsRes.ok) {
           const d = await gigsRes.json();
-          setLiveGigs((d.gigs || []).filter((g: any) => g.clubId === club.id));
+          setLiveGigs((d.gigs || []).filter((g: any) => 
+            (club.id && g.clubId === club.id) || 
+            (club.slug && g.club && g.club.slug === club.slug)
+          ));
         }
         if (eventsRes.ok) {
           const d = await eventsRes.json();
-          setLiveEvents((d.events || []).filter((e: any) => e.clubId === club.id));
+          setLiveEvents((d.events || []).filter((e: any) => 
+            (club.id && e.clubId === club.id) || 
+            (e.club && club.slug && e.club.slug === club.slug)
+          ));
         }
       } catch (e) {
         console.log('[ClubDetailModal] Fetch error:', e);
@@ -212,7 +229,7 @@ export function ClubDetailModal({
              {liveEvents.length > 0 ? liveEvents.map((ev) => (
                <EventCard key={ev.id} item={{
                   id: ev.id,
-                  imageUrl: resolveUrl(ev.imageUrl) || resolveUrl(club.image) || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80',
+                  imageUrl: resolveUrl(ev.imageUrl) || resolveUrl(club.coverImage) || resolveUrl(club.image) || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80',
                   day: ev.date ? new Date(ev.date).getDate() : '??',
                   month: ev.date ? new Date(ev.date).toLocaleDateString('en-US', { month: 'short' }).toUpperCase() : '??',
                   category: club.name.toUpperCase(),

@@ -19,9 +19,33 @@ import { MOCK_FEED_POSTS, MOCK_EVENTS } from '@/constants/occ-mock-feed';
 import { ClubDetailModal } from '@/components/occ/ClubDetailModal';
 import { EventDetailModal } from '@/components/occ/EventDetailModal';
 import { useAuth, authHeaders, API_URL, resolveUrl } from '@/context/auth-context';
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
+import { RefreshControl } from 'react-native';
+import { usePusherChannel } from '@/hooks/usePusher';
 
 const { width } = Dimensions.get('window');
+
+// --- Social Display Logic (Mirrored from Home/Backend) ---
+const dummySocialSeed = (entityId: string, salt: string) => {
+  let h = 2166136261;
+  const s = `${salt}:${entityId}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return 1 + (Math.abs(h) % 799);
+};
+
+const displayClubMembers = (clubId: string, realMembers: number, storedBase?: number | null) => {
+  const base = (storedBase != null && storedBase >= 100 && storedBase < 800)
+    ? storedBase
+    : dummySocialSeed(clubId, "club-followers");
+  return base + Math.max(0, realMembers);
+};
+
+const displayPostLikes = (postId: string, realLikes: number) => {
+  return dummySocialSeed(postId, "post-likes") + Math.max(0, realLikes);
+};
 
 const EXPLORE_CLUBS = [
   { 
@@ -68,12 +92,14 @@ export default function ExploreScreen() {
   const [liveClubs, setLiveClubs] = useState<any[]>([]);
   const [liveEvents, setLiveEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = async (segment: string, query: string) => {
-    setLoading(true);
+  const fetchData = useCallback(async (segment: string, query: string, isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     try {
       if (segment === 'POSTS') {
-        const res = await fetch(`${API_URL}/api/explore/posts?q=${query}`, {
+        const res = await fetch(`${API_URL}/api/posts?q=${query}`, {
           headers: authHeaders(token)
         });
         if (res.ok) {
@@ -87,11 +113,11 @@ export default function ExploreScreen() {
                 verified: p.user?.role === 'CLUB_HEADER' || p.user?.role === 'ADMIN',
                 handle: p.club?.slug || p.user?.fullName?.split(' ')[0].toLowerCase() || 'member'
               },
-              timeLabel: 'now',
+              timeLabel: p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'now',
               imageUrl: resolveUrl(p.imageUrl || (p.imageUrls && p.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90',
               caption: p.caption || p.content || '',
-              likes: p.likesCount || 0,
-              comments: p.commentsCount || 0,
+              likes: displayPostLikes(p.id, p.likesCount || 0),
+              comments: p.comments?.length || p.commentsCount || 0,
             })));
           }
         }
@@ -103,14 +129,8 @@ export default function ExploreScreen() {
           const data = await res.json();
           if (data.clubs) {
             setLiveClubs(data.clubs.map((c: any) => ({
-              id: c.id,
-              name: c.name,
-              category: c.slug.toUpperCase(),
-              image: resolveUrl(c.coverImage) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=90',
-              members: c.memberCount || 0,
-              eliteCount: c.memberCount || 0,
-              description: c.description || '',
-              title: c.name
+              ...c,
+              memberDisplayCount: displayClubMembers(c.id, c.memberCount || 0, c.memberDisplayBase).toLocaleString('en-IN')
             })));
           }
         }
@@ -120,61 +140,72 @@ export default function ExploreScreen() {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.events) {
-            setLiveEvents(data.events.map((e: any) => ({
-              id: e.id,
-              title: e.title,
-              clubName: e.club?.name || 'Club',
-              dateLabel: e.date ? new Date(e.date).toLocaleDateString() : 'Soon',
-              imageUrl: resolveUrl(e.imageUrl) || resolveUrl(e.club?.coverImage) || 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=90',
-              description: e.description || '',
-              location: e.location || 'Campus',
-              attendees: 42
-            })));
-          }
+          if (data.events) setLiveEvents(data.events);
         }
       }
-    } catch (err) {
-      console.log('Explore fetch error:', err);
+    } catch (e) {
+      console.error('Explore fetch err:', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [token]);
+
+  const onRefresh = useCallback(() => {
+    fetchData(activeSegment, searchQuery, true);
+  }, [activeSegment, searchQuery, fetchData]);
+
+  // Realtime listener for NEW posts (Global)
+  usePusherChannel(['global-posts', 'global-announcements'], 'new-post', (data) => {
+    if (activeSegment === 'POSTS' && !searchQuery) {
+      fetchData('POSTS', ''); // Refresh the list when a new post drops
+    }
+  });
 
   useEffect(() => {
     if (ready) {
       fetchData(activeSegment, searchQuery);
     }
-  }, [activeSegment, searchQuery, ready]);
+  }, [activeSegment, searchQuery, ready, fetchData]);
 
   const handleOpenClub = (club: any) => {
     const formatted = {
       ...club,
       title: club.name,
+      image: resolveUrl(club.coverImage) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=90',
+      members: club.memberCount || 0,
+      eliteCount: club.memberCount || 0,
+      description: club.description || '',
     };
     setSelectedClub(formatted);
     setClubModalVisible(true);
   };
 
   const handleOpenEvent = (ev: any) => {
-    setSelectedEvent(ev);
+    const formatted = {
+      ...ev,
+      clubName: ev.club?.name || 'Club',
+      dateLabel: ev.date ? new Date(ev.date).toLocaleDateString() : 'Soon',
+      imageUrl: resolveUrl(ev.imageUrl) || resolveUrl(ev.club?.coverImage) || 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=90',
+      location: ev.location || 'Campus',
+      attendees: 42
+    };
+    setSelectedEvent(formatted);
     setEventModalVisible(true);
   };
-
-  const filteredEvents = MOCK_EVENTS.filter(e => 
-    e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.clubName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   return (
     <View style={styles.container}>
       <ScrollView 
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: insets.top + 20, paddingBottom: 150 }}
+        contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 20, paddingBottom: 150 }}
         onScroll={handleScroll}
         onMomentumScrollEnd={handleScrollEnd}
         onScrollEndDrag={handleScrollEnd}
         scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={dash.accent} />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
@@ -274,14 +305,14 @@ export default function ExploreScreen() {
 function ExploreClubCard({ club }: { club: any }) {
   return (
     <View style={styles.wideCard}>
-      <Image source={{ uri: club.image }} style={styles.wideCardImage} />
+      <Image source={{ uri: resolveUrl(club.coverImage || club.image) }} style={styles.wideCardImage} />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.85)']} style={styles.itemOverlay}>
         <View style={styles.itemContent}>
           <Text style={styles.wideCardCategory}>{club.category}</Text>
           <Text style={styles.wideCardTitle}>{club.name}</Text>
           <View style={styles.clubMetaRow}>
             <Ionicons name="people" size={12} color="rgba(255,255,255,0.7)" />
-            <Text style={styles.wideCardMeta}>{club.members} Members</Text>
+            <Text style={styles.wideCardMeta}>{club.memberDisplayCount || club.members} Members</Text>
           </View>
         </View>
       </LinearGradient>
@@ -292,7 +323,7 @@ function ExploreClubCard({ club }: { club: any }) {
 function ExploreEventCard({ event }: { event: any }) {
   return (
     <View style={styles.wideCard}>
-      <Image source={{ uri: event.imageUrl }} style={styles.wideCardImage} />
+      <Image source={{ uri: resolveUrl(event.imageUrl) }} style={styles.wideCardImage} />
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.85)']} style={styles.itemOverlay}>
         <View style={styles.itemContent}>
           <Text style={styles.wideCardCategory}>{event.clubName}</Text>

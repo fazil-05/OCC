@@ -6,7 +6,7 @@ import * as Linking from 'expo-linking';
 
 const TOKEN_KEY = 'occ-session-token';
 const USER_STORAGE_KEY = 'occ-user-data';
-const API_URL = 'https://occ-prod.onrender.com';
+const API_URL = 'https://occ-v2-prod.vercel.app';
 
 export type UserMembership = {
   club: {
@@ -151,7 +151,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const signIn = React.useCallback(async (email: string, password: string) => {
     try {
-      console.log('--- MOBILE APP LOGIN INITIATED (v2.0.Render) ---');
+      console.log('--- MOBILE APP LOGIN INITIATED ---');
       console.log(`URL: ${API_URL}/api/auth/login`);
       console.log(`Email: '${email}' | Password: '${password}'`);
 
@@ -257,10 +257,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async (from: 'login' | 'register' = 'login') => {
     try {
       // 1. Construct the Google Start URL with mobile redirect and context
-      const authUrl = `${API_URL}/api/auth/google/start?redirect=mobile&from=${from}`;
+      const returnUrl = Linking.createURL('/');
+      const authUrl = `${API_URL}/api/auth/google/start?redirect=mobile&from=${from}&returnTo=${encodeURIComponent(returnUrl)}`;
       
       // 2. Open Web Browser and wait for redirect back to app
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, Linking.createURL('/'));
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, returnUrl);
       
       if (result.type === 'success' && result.url) {
         // 3. Extract token from URL (OCC://google-auth?token=...)
