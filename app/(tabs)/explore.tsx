@@ -98,53 +98,54 @@ export default function ExploreScreen() {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      if (segment === 'POSTS') {
-        const res = await fetch(`${API_URL}/api/posts?q=${query}`, {
+        let endpoint = `${API_URL}/api/explore/posts`; // Default
+        if (segment === 'POSTS') endpoint = `${API_URL}/api/posts?q=${query}`;
+        else if (segment === 'CLUBS') endpoint = `${API_URL}/api/clubs?q=${query}`;
+        else if (segment === 'EVENTS') endpoint = `${API_URL}/api/events?q=${query}`;
+
+        console.log(`[Explore] Fetching ${segment} with query "${query}" from ${endpoint}...`);
+        const res = await fetch(endpoint, {
           headers: authHeaders(token)
         });
+        
+        console.log(`[Explore] Response Status: ${res.status}`);
+        
         if (res.ok) {
           const data = await res.json();
-          if (data.posts) {
-            setLivePosts(data.posts.map((p: any) => ({
-              id: p.id,
-              author: { 
-                name: p.user?.fullName || 'User', 
-                avatarUrl: resolveUrl(p.user?.avatar) || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80',
-                verified: p.user?.role === 'CLUB_HEADER' || p.user?.role === 'ADMIN',
-                handle: p.club?.slug || p.user?.fullName?.split(' ')[0].toLowerCase() || 'member'
-              },
-              timeLabel: p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'now',
-              imageUrl: resolveUrl(p.imageUrl || (p.imageUrls && p.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90',
-              caption: p.caption || p.content || '',
-              likes: displayPostLikes(p.id, p.likesCount || 0),
-              comments: p.comments?.length || p.commentsCount || 0,
-            })));
+          console.log(`[Explore] Received ${segment}:`, (data.posts || data.clubs || data.events || []).length);
+          if (segment === 'POSTS') {
+            if (data.posts) {
+              setLivePosts(data.posts.map((p: any) => ({
+                id: p.id,
+                author: { 
+                  name: p.user?.fullName || 'User', 
+                  avatarUrl: resolveUrl(p.user?.avatar) || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80',
+                  verified: p.user?.role === 'CLUB_HEADER' || p.user?.role === 'ADMIN',
+                  handle: p.club?.slug || p.user?.fullName?.split(' ')[0].toLowerCase() || 'member'
+                },
+                timeLabel: p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'now',
+                imageUrl: resolveUrl(p.imageUrl || (p.imageUrls && p.imageUrls[0])) || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1080&q=90',
+                caption: p.caption || p.content || '',
+                likes: displayPostLikes(p.id, p.likesCount || 0),
+                comments: p.comments?.length || p.commentsCount || 0,
+              })));
+            }
+          } else if (segment === 'CLUBS') {
+            if (data.clubs) {
+              setLiveClubs(data.clubs.map((c: any) => ({
+                ...c,
+                memberDisplayCount: displayClubMembers(c.id, c.memberCount || 0, c.memberDisplayBase).toLocaleString('en-IN')
+              })));
+            }
+          } else if (segment === 'EVENTS') {
+            if (data.events) setLiveEvents(data.events);
           }
+        } else {
+          const errText = await res.text();
+          console.error(`[Explore] Fetch Failed: ${res.status} - ${errText}`);
         }
-      } else if (segment === 'CLUBS') {
-        const res = await fetch(`${API_URL}/api/clubs?q=${query}`, {
-          headers: authHeaders(token)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.clubs) {
-            setLiveClubs(data.clubs.map((c: any) => ({
-              ...c,
-              memberDisplayCount: displayClubMembers(c.id, c.memberCount || 0, c.memberDisplayBase).toLocaleString('en-IN')
-            })));
-          }
-        }
-      } else if (segment === 'EVENTS') {
-        const res = await fetch(`${API_URL}/api/events?q=${query}`, {
-          headers: authHeaders(token)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.events) setLiveEvents(data.events);
-        }
-      }
-    } catch (e) {
-      console.error('Explore fetch err:', e);
+      } catch (e) {
+        console.error('Explore fetch err:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);

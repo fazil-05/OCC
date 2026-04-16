@@ -17,17 +17,36 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '@/context/auth-context';
+import { useGoogleAuth } from '@/hooks/useGoogleAuth';
+import * as SecureStore from 'expo-secure-store';
 import { dash } from '@/constants/occ-dashboard-theme';
 
 const { width } = Dimensions.get('window');
 
+const TOKEN_KEY = 'occ-session-token';
+
 export default function RegisterScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { register, signInWithGoogle } = useAuth();
+  const auth = useAuth();
+  
+  // Extract standard auth operations safely
+  const { register, sendOtp, setToken, refreshProfileWithToken } = auth;
+  
+  // Our Custom Google Hook
+  const { signInWithGoogle, loading: googleBusy, error: googleError } = useGoogleAuth();
+  
+  React.useEffect(() => {
+    console.log('--- RegisterScreen Auth Context Keys ---');
+    console.log(Object.keys(auth));
+    if (typeof sendOtp !== 'function') {
+      console.warn('sendOtp is NOT a function!', typeof sendOtp);
+    }
+  }, []);
   
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [referralCode, setReferralCode] = useState('');
@@ -39,24 +58,60 @@ export default function RegisterScreen() {
   React.useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(bounceAnim, {
-          toValue: -6,
-          duration: 600,
-          useNativeDriver: true,
-        }),
-        Animated.timing(bounceAnim, {
-          toValue: 0,
-          duration: 600,
-          useNativeDriver: true,
-        }),
+        Animated.timing(bounceAnim, { toValue: -6, duration: 600, useNativeDriver: true }),
+        Animated.timing(bounceAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
       ])
     ).start();
   }, [bounceAnim]);
+  
+  const handleGoogleSignup = async () => {
+    if (googleBusy) return;
+    
+    // Actually our hook doesn't currently differentiate "login" vs "register" 
+    // because both go to /api/auth/google/start?mode=poll
+    // The backend just logs them in or registers them implicitly based on Google email!
+    const token = await signInWithGoogle();
+    
+    if (token) {
+      await SecureStore.setItemAsync(TOKEN_KEY, token);
+      if (setToken) setToken(token);
+      if (refreshProfileWithToken) await refreshProfileWithToken(token);
+      router.replace('/(tabs)/home');
+    } else if (googleError) {
+      alert(`Google Sign-Up Error: ${googleError}`);
+    }
+  };
+
+  const onSendOtp = async () => {
+    if (!email) {
+      alert('Please enter your email first.');
+      return;
+    }
+    setBusy(true);
+    if (typeof sendOtp !== 'function') {
+      alert('Internal error: Verification service not initialized. Please restart the app.');
+      setBusy(false);
+      return;
+    }
+    const result = await sendOtp(email);
+    if (result.success) {
+      alert('Verification code sent to ' + email);
+    } else {
+      alert(result.error);
+    }
+    setBusy(false);
+  };
+
+  const handleOtpChange = (value: string, index: number) => {
+    const newOtp = [...otp];
+    newOtp[index] = value;
+    setOtp(newOtp);
+  };
 
   const onRegister = async () => {
     if (busy) return;
-    if (!fullName || !email || !password || !referralCode) {
-      alert('Please fill all required fields including the club referral code.');
+    if (!fullName || !email || !password || !phoneNumber) {
+      alert('Please fill all required fields (Name, Email, Password, and Mobile Number).');
       return;
     }
     setBusy(true);
@@ -66,7 +121,7 @@ export default function RegisterScreen() {
       password,
       confirmPassword,
       collegeName: 'Your College', 
-      phoneNumber: '0000000000', // Placeholder or add input
+      phoneNumber,
       referralCode,
       otp: otp.join(''),
     });
@@ -99,12 +154,7 @@ export default function RegisterScreen() {
           <View style={styles.header}>
             <View style={styles.brandRow}>
               <Text style={styles.brandMark}>occ</Text>
-              <Animated.View 
-                style={[
-                  styles.brandDot, 
-                  { transform: [{ translateY: bounceAnim }] }
-                ]} 
-              />
+              <Animated.View style={[styles.brandDot, { transform: [{ translateY: bounceAnim }] }]} />
             </View>
             <Text style={styles.brandSub}>Off Campus Clubs</Text>
           </View>
@@ -115,22 +165,21 @@ export default function RegisterScreen() {
             <Text style={styles.subText}>Create your OCC account to get started</Text>
           </View>
 
+          {googleError && (
+             <Text style={{ color: 'red', fontFamily: 'InterSemi', fontSize: 13, marginBottom: 12 }}>
+               {googleError}
+             </Text>
+          )}
+
           {/* Google Register */}
           <TouchableOpacity 
             style={styles.googleBtn} 
             activeOpacity={0.8}
-            onPress={async () => {
-              setBusy(true);
-              try {
-                await signInWithGoogle('register');
-              } catch (err) {
-                alert('Google Sign-In failed. Please try again.');
-              } finally {
-                setBusy(false);
-              }
-            }}
+            onPress={handleGoogleSignup}
           >
-            <Ionicons name="logo-google" size={20} color="#EA4335" />
+            {googleBusy 
+                ? <ActivityIndicator size="small" color="#EA4335" />
+                : <Ionicons name="logo-google" size={20} color="#EA4335" />}
             <Text style={styles.googleBtnText}>Sign up with Google</Text>
           </TouchableOpacity>
 
@@ -161,9 +210,30 @@ export default function RegisterScreen() {
               onChangeText={setEmail}
             />
 
-            <TouchableOpacity style={styles.otpActionBtn} activeOpacity={0.7}>
-              <Ionicons name="mail-outline" size={18} color="#4A5568" />
-              <Text style={styles.otpActionBtnText}>Send verification code</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Mobile number (10-digit)"
+              placeholderTextColor="#A0AEC0"
+              keyboardType="phone-pad"
+              maxLength={10}
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
+            />
+
+            <TouchableOpacity 
+              style={[styles.otpActionBtn, busy && styles.signupBtnDisabled]} 
+              activeOpacity={0.7}
+              disabled={busy}
+              onPress={onSendOtp}
+            >
+              {busy ? (
+                <ActivityIndicator size="small" color="#4A5568" />
+              ) : (
+                <>
+                  <Ionicons name="mail-outline" size={18} color="#4A5568" />
+                  <Text style={styles.otpActionBtnText}>Send verification code</Text>
+                </>
+              )}
             </TouchableOpacity>
 
             <View style={styles.otpSection}>
@@ -176,6 +246,7 @@ export default function RegisterScreen() {
                       keyboardType="number-pad"
                       maxLength={1}
                       value={digit}
+                      onChangeText={(val) => handleOtpChange(val, idx)}
                     />
                   </View>
                 ))}
@@ -185,7 +256,7 @@ export default function RegisterScreen() {
             <View style={styles.referralGroup}>
               <TextInput
                 style={styles.input}
-                placeholder="CLUB REFERRAL CODE"
+                placeholder="CLUB REFERRAL CODE (OPTIONAL)"
                 placeholderTextColor="#A0AEC0"
                 autoCapitalize="characters"
                 value={referralCode}

@@ -44,3 +44,17 @@ _occ_ref
 # generated native folders
 /ios
 /android
+
+# Monorepo / Backend
+backend/node_modules/
+backend/.next/
+backend/.env
+backend/.env*.local
+backend/pnpm-lock.yaml
+backend/build_log.txt
+backend/tmp_schema.prisma
+backend/public_files*.txt
+backend/extracted_media_refs.txt
+backend/before_dump.sql
+backend/node_modules
+backend/.vercel

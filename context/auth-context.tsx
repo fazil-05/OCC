@@ -6,7 +6,15 @@ import * as Linking from 'expo-linking';
 
 const TOKEN_KEY = 'occ-session-token';
 const USER_STORAGE_KEY = 'occ-user-data';
-const API_URL = 'https://occ-v2-prod.vercel.app';
+
+// Use the environment variable from .env or fallback
+const API_URL = process.env.EXPO_PUBLIC_OCC_API_URL || 'https://occ-v2-prod.vercel.app';
+
+console.log('--- OCC API INITIALIZED ---');
+console.log('TARGET URL:', API_URL);
+console.log('ENVIRONMENT:', __DEV__ ? 'DEVELOPMENT' : 'PRODUCTION');
+console.log('---------------------------');
+
 
 export type UserMembership = {
   club: {
@@ -61,6 +69,7 @@ type AuthContextValue = {
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   signInWithGoogle: (from?: 'login' | 'register') => Promise<void>;
+  sendOtp: (email: string) => Promise<{ success: boolean; error?: string }>;
 };
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
@@ -139,6 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             memberships: data.user.memberships || storedUser?.memberships || [],
             registrations: data.user.registrations || storedUser?.registrations || [],
             gigsApplied: data.user.gigsApplied || storedUser?.gigsApplied || [],
+            phoneNumber: data.user.phoneNumber || storedUser?.phoneNumber || null,
+            emailVerified: data.user.emailVerified || null,
           };
           setUser(merged);
           await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(merged));
@@ -181,7 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatar: data.user.avatar ?? null,
           bio: data.user.bio ?? null,
           city: null,
-          phoneNumber: null,
+          phoneNumber: data.user.phoneNumber || null,
           role: data.role,
           approvalStatus: data.approvalStatus,
           memberships: data.user.memberships || [],
@@ -232,7 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatar: data.user.avatar ?? null,
           bio: data.user.bio ?? null,
           city: null,
-          phoneNumber: null,
+          phoneNumber: data.user.phoneNumber || null,
           memberships: [],
         };
 
@@ -256,28 +267,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async (from: 'login' | 'register' = 'login') => {
     try {
-      // 1. Construct the Google Start URL with mobile redirect and context
-      const returnUrl = Linking.createURL('/');
-      const authUrl = `${API_URL}/api/auth/google/start?redirect=mobile&from=${from}&returnTo=${encodeURIComponent(returnUrl)}`;
+      // Generate a unique pollKey — the server will store the token against this key
+      const pollKey = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       
-      // 2. Open Web Browser and wait for redirect back to app
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, returnUrl);
+      // Build auth URL with pollKey so the backend uses the polling flow
+      const authUrl = `${API_URL}/api/auth/google/start?from=${from}&pollKey=${pollKey}`;
       
-      if (result.type === 'success' && result.url) {
-        // 3. Extract token from URL (OCC://google-auth?token=...)
-        const { queryParams } = Linking.parse(result.url);
-        const googleToken = queryParams?.token as string;
-        
-        if (googleToken) {
-          await SecureStore.setItemAsync(TOKEN_KEY, googleToken);
-          setToken(googleToken);
-          await refreshProfileWithToken(googleToken);
-        }
+      console.log('[Google Auth] Starting poll-based OAuth. pollKey:', pollKey);
+      console.log('[Google Auth] Auth URL:', authUrl);
+
+      // Open browser — user completes Google sign-in on the website
+      // The browser will show a "Signed in!" page after completion
+      WebBrowser.openBrowserAsync(authUrl);
+
+      // Poll for the token every 1.5 seconds (max 90 seconds = 60 attempts)
+      const maxAttempts = 60;
+      let attempts = 0;
+      
+      const pollForToken = (): Promise<string | null> => {
+        return new Promise((resolve) => {
+          const interval = setInterval(async () => {
+            attempts++;
+            try {
+              const res = await fetch(`${API_URL}/api/auth/google/poll?state=${pollKey}`);
+              if (res.status === 200) {
+                const data = await res.json();
+                if (data.token) {
+                  clearInterval(interval);
+                  console.log('[Google Auth] Token received via polling!');
+                  resolve(data.token);
+                  return;
+                }
+              }
+              if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                console.warn('[Google Auth] Polling timed out after 90 seconds.');
+                resolve(null);
+              }
+            } catch (e) {
+              console.error('[Google Auth] Poll error:', e);
+            }
+          }, 1500);
+        });
+      };
+
+      const googleToken = await pollForToken();
+      
+      // Close the browser once we have the token (or on timeout)
+      WebBrowser.dismissBrowser();
+
+      if (googleToken) {
+        await SecureStore.setItemAsync(TOKEN_KEY, googleToken);
+        setToken(googleToken);
+        await refreshProfileWithToken(googleToken);
+        console.log('[Google Auth] Login complete!');
+      } else {
+        throw new Error('Google sign-in timed out or was cancelled.');
       }
     } catch (err) {
       console.error('Google Sign In Error:', err);
+      throw err;
     }
   };
+
+  
+  const sendOtp = React.useCallback(async (email: string) => {
+    try {
+      console.log(`[auth] Sending OTP to: ${email}`);
+      const response = await fetch(`${API_URL}/api/auth/register/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        return { success: true };
+      }
+      return { success: false, error: data.error || 'Failed to send OTP' };
+    } catch (e) {
+      console.error('[auth] sendOtp error:', e);
+      return { success: false, error: 'Network error. Please try again.' };
+    }
+  }, []);
 
   const signOut = React.useCallback(async () => {
     try {
@@ -310,8 +381,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signOut,
       refreshProfile,
       signInWithGoogle,
+      sendOtp,
     }),
-    [user, token, ready, signIn, register, signOut, refreshProfile, signInWithGoogle],
+    [user, token, ready, signIn, register, signOut, refreshProfile, signInWithGoogle, sendOtp],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

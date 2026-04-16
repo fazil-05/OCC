@@ -1,0 +1,66 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm exec prisma db push && pnpm run build",
+  "headers": [
+    {
+      "source": "/_next/static/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/(.env.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/.git/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/(package.json|package-lock.json|pnpm-lock.yaml)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/_next/static/:match*/_buildManifest.js",
+      "destination": "/404"
+    },
+    {
+      "source": "/.env",
+      "destination": "/404"
+    },
+    {
+      "source": "/.env.local",
+      "destination": "/404"
+    },
+    {
+      "source": "/.env.example",
+      "destination": "/404"
+    },
+    {
+      "source": "/.git/:match*",
+      "destination": "/404"
+    },
+    {
+      "source": "/package.json",
+      "destination": "/404"
+    },
+    {
+      "source": "/package-lock.json",
+      "destination": "/404"
+    },
+    {
+      "source": "/pnpm-lock.yaml",
+      "destination": "/404"
+    }
+  ]
+}

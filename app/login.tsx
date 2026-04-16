@@ -13,21 +13,29 @@ import {
   Animated,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/auth-context';
+import { useGoogleAuth } from '@/hooks/useGoogleAuth';
+import * as SecureStore from 'expo-secure-store';
 import { dash } from '@/constants/occ-dashboard-theme';
-import { OCC } from '@/constants/occ';
 
 const { width } = Dimensions.get('window');
+
+// Keep secure keys consistent
+const TOKEN_KEY = 'occ-session-token';
 
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signIn, signInWithGoogle } = useAuth();
+  
+  // Extract standard auth operations
+  const { signIn, setToken, refreshProfileWithToken } = useAuth();
+  
+  // Extract our new Poll-Mode Google Hook
+  const { signInWithGoogle, loading: googleBusy, error: googleError } = useGoogleAuth();
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -36,16 +44,8 @@ export default function LoginScreen() {
   React.useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(bounceAnim, {
-          toValue: -6,
-          duration: 600,
-          useNativeDriver: true,
-        }),
-        Animated.timing(bounceAnim, {
-          toValue: 0,
-          duration: 600,
-          useNativeDriver: true,
-        }),
+        Animated.timing(bounceAnim, { toValue: -6, duration: 600, useNativeDriver: true }),
+        Animated.timing(bounceAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
       ])
     ).start();
   }, [bounceAnim]);
@@ -65,6 +65,26 @@ export default function LoginScreen() {
     }
     setBusy(false);
   };
+  
+  const handleGoogleLogin = async () => {
+    if (googleBusy) return;
+    
+    const token = await signInWithGoogle();
+    
+    if (token) {
+      // 1. Save the token
+      await SecureStore.setItemAsync(TOKEN_KEY, token);
+      
+      // 2. Set context & fetch profile
+      if (setToken) setToken(token);
+      if (refreshProfileWithToken) await refreshProfileWithToken(token);
+      
+      // 3. Go home!
+      router.replace('/(tabs)/home');
+    } else if (googleError) {
+      alert(`Google Login Error: ${googleError}`);
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -75,30 +95,20 @@ export default function LoginScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={[
-            styles.scroll,
-            { paddingTop: insets.top + 20, paddingBottom: 40 },
-          ]}
+          contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 20, paddingBottom: 40 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Main Auth Container */}
           <View style={styles.authContainer}>
-            {/* Branding Header */}
+            {/* Header */}
             <View style={styles.header}>
               <View>
                 <View style={styles.brandRow}>
                   <Text style={styles.brandMark}>occ</Text>
-                  <Animated.View 
-                    style={[
-                      styles.brandDot, 
-                      { transform: [{ translateY: bounceAnim }] }
-                    ]} 
-                  />
+                  <Animated.View style={[styles.brandDot, { transform: [{ translateY: bounceAnim }] }]} />
                 </View>
                 <Text style={styles.brandSub}>Off Campus Clubs</Text>
               </View>
-              
               <View style={styles.topRightNav}>
                 <TouchableOpacity onPress={() => router.push('/register')}>
                   <Text style={styles.navLinkMuted}>Sign Up</Text>
@@ -109,28 +119,26 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Welcome Text */}
             <View style={styles.welcomeSection}>
               <Text style={styles.h1}>Hi there!</Text>
               <Text style={styles.subText}>Welcome to OCC. Community Dashboard</Text>
             </View>
 
-            {/* Google Login */}
+            {googleError && (
+               <Text style={{ color: 'red', fontFamily: 'InterSemi', fontSize: 13, marginBottom: 12 }}>
+                 {googleError}
+               </Text>
+            )}
+
+            {/* Google Login via Polling Hook */}
             <TouchableOpacity 
               style={styles.googleBtn} 
               activeOpacity={0.8}
-              onPress={async () => {
-                setBusy(true);
-                try {
-                  await signInWithGoogle('login');
-                } catch (err) {
-                  alert('Google Sign-In failed. Please try again.');
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onPress={handleGoogleLogin}
             >
-              <Ionicons name="logo-google" size={20} color="#EA4335" />
+              {googleBusy 
+                ? <ActivityIndicator size="small" color="#EA4335" />
+                : <Ionicons name="logo-google" size={20} color="#EA4335" />}
               <Text style={styles.googleBtnText}>Log in with Google</Text>
             </TouchableOpacity>
 

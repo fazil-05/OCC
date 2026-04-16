@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String              @id @default(cuid())
+  fullName               String
+  collegeName            String
+  phoneNumber            String              @unique
+  email                  String              @unique
+  password               String
+  emailVerified          DateTime?
+  avatar                 String?
+  bio                    String?
+  city                   String?
+  graduationYear         Int?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  approvalStatus         ApprovalStatus      @default(APPROVED)
+  clubManagedId          String?
+  referralCode           String?             @unique
+  referredBy             String?
+  role                   UserRole            @default(STUDENT)
+  suspended              Boolean             @default(false)
+  pendingLeadClubId      String?
+  onboardingComplete     Boolean             @default(false)
+  referralSource         String?
+  adminLevel             String?
+  adminRoleTemplateId    String?
+  assignedModerationTickets ModerationTicket[] @relation("ModerationAssignee")
+  announcements          Announcement[]
+  auditLogs              AuditLog[]
+  memberships            ClubMembership[]
+  clubOnboardingEntries  ClubOnboarding[]
+  clubManaged            Club?               @relation("ClubHeader")
+  commentReports         CommentReport[]
+  postComments           Comment[]
+  registrations          EventRegistration[]
+  follows                Follow[]            @relation("follows")
+  followedBy             Follow[]            @relation("followedBy")
+  gigsApplied            GigApplication[]
+  gigsPosted             Gig[]               @relation("GigsPosted")
+  notifications          Notification[]
+  postLikes              PostLike[]
+  postBookmarks          PostBookmark[]
+  posts                  Post[]
+  referralStatsAsHeader  ReferralStat[]      @relation("ReferralHeader")
+  referralStatsAsStudent ReferralStat[]      @relation("ReferralStudent")
+  shares                 Share[]
+  pendingLeadClub        Club?               @relation("PendingLeadApplicants", fields: [pendingLeadClubId], references: [id])
+  referrer               User?               @relation("ReferralRelation", fields: [referredBy], references: [id])
+  referrals              User[]              @relation("ReferralRelation")
+  adminRoleTemplate      AdminRoleTemplate?  @relation(fields: [adminRoleTemplateId], references: [id])
+  adminBroadcastsCreated AdminBroadcast[]
+
+  @@map("users")
+}
+
+model Club {
+  id                    String           @id @default(cuid())
+  slug                  String           @unique
+  name                  String
+  icon                  String
+  description           String
+  theme                 String
+  coverImage            String?
+  memberCount           Int              @default(0)
+  /// Shown member total uses this base (100–799) + real `memberCount` (joins). Set at club creation; null = legacy deterministic seed.
+  memberDisplayBase     Int?
+  createdAt             DateTime         @default(now())
+  headerId              String?          @unique
+  postingFrozen         Boolean          @default(false)
+  announcements         Announcement[]
+  members               ClubMembership[]
+  header                User?            @relation("ClubHeader", fields: [headerId], references: [id])
+  events                Event[]
+  gigs                  Gig[]
+  posts                 Post[]
+  referralStats         ReferralStat[]
+  pendingLeadApplicants User[]           @relation("PendingLeadApplicants")
+
+  @@map("clubs")
+}
+
+model ClubMembership {
+  id       String   @id @default(cuid())
+  userId   String
+  clubId   String
+  joinedAt DateTime @default(now())
+  role     String   @default("member")
+  club     Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clubId])
+  @@map("club_memberships")
+}
+
+model Event {
+  id            String              @id @default(cuid())
+  clubId        String
+  title         String
+  description   String
+  date          DateTime
+  venue         String
+  price         Int                 @default(0)
+  maxCapacity   Int?
+  imageUrl      String              @default("")
+  createdAt     DateTime            @default(now())
+  registrations EventRegistration[]
+  club          Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@map("events")
+}
+
+model EventRegistration {
+  id        String   @id @default(cuid())
+  userId    String
+  eventId   String
+  status    String   @default("registered")
+  createdAt DateTime @default(now())
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventId])
+  @@map("event_registrations")
+}
+
+model Post {
+  id          String     @id @default(cuid())
+  userId      String
+  clubId      String
+  imageUrl    String?
+  caption     String?
+  likes       Int        @default(0)
+  createdAt   DateTime   @default(now())
+  content     String?
+  imageUrls   String[]   @default([])
+  likesCount  Int        @default(0)
+  sharesCount Int        @default(0)
+  type        String     @default("post")
+  hidden      Boolean    @default(false)
+  pinned      Boolean    @default(false)
+  comments      Comment[]
+  postLikes     PostLike[]
+  postBookmarks PostBookmark[]
+  club          Club       @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shares      Share[]
+
+  @@map("posts")
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("post_likes")
+}
+
+model PostBookmark {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("post_bookmarks")
+}
+
+model Comment {
+  id        String          @id @default(cuid())
+  postId    String
+  userId    String
+  content   String
+  createdAt DateTime        @default(now())
+  reports   CommentReport[]
+  post      Post            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
+
+model CommentReport {
+  id         String   @id @default(cuid())
+  commentId  String
+  reporterId String
+  reason     String
+  createdAt  DateTime @default(now())
+  comment    Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reporter   User     @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@map("comment_reports")
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  clubId    String
+  authorId  String
+  title     String
+  content   String
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  club      Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@map("announcements")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model ReferralStat {
+  id           String   @id @default(cuid())
+  clubHeaderId String
+  studentId    String
+  registeredAt DateTime @default(now())
+  clubId       String
+  clubHeader   User     @relation("ReferralHeader", fields: [clubHeaderId], references: [id], onDelete: Cascade)
+  club         Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  student      User     @relation("ReferralStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("referral_stats")
+}
+
+model ClubOnboarding {
+  id        String   @id @default(cuid())
+  userId    String
+  clubSlug  String
+  /// Which of the 3 rotating question sets (0–2) the member saw
+  questionVariant Int @default(0)
+  answer1   String
+  answer2   String
+  answer3   String
+  answer4   String
+  answer5   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clubSlug])
+  @@index([clubSlug, createdAt])
+  @@map("club_onboarding")
+}
+
+model Gig {
+  id           String           @id @default(cuid())
+  title        String
+  description  String
+  payMin       Int
+  payMax       Int
+  clubId       String?
+  deadline     DateTime?
+  createdAt    DateTime         @default(now())
+  postedById   String?
+  applications GigApplication[]
+  club         Club?            @relation(fields: [clubId], references: [id])
+  postedBy     User?            @relation("GigsPosted", fields: [postedById], references: [id])
+
+  @@map("gigs")
+}
+
+model GigApplication {
+  id             String   @id @default(cuid())
+  userId         String
+  gigId          String
+  /// PENDING | APPROVED | REJECTED
+  status         String   @default("PENDING")
+  createdAt      DateTime @default(now())
+  /// Short pitch (max 50 chars in API)
+  message        String?
+  /// Work completion / submission summary from applicant
+  workDescription String?
+  /// Optional submission artifact
+  submissionFileUrl  String?
+  submissionFileName String?
+  submissionFileMime String?
+  submissionFileSize Int?
+  applicantEmail String?
+  /// Snapshot at apply time (shown to club header)
+  applicantName  String?
+  applicantPhone String?
+  gig            Gig      @relation(fields: [gigId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gigId])
+  @@index([gigId, status])
+  @@map("gig_applications")
+}
+
+model EmailOtpToken {
+  id           String     @id @default(cuid())
+  email        String
+  purpose      OtpPurpose
+  codeHash     String
+  attemptsLeft Int        @default(5)
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdAt    DateTime   @default(now())
+
+  @@index([email, purpose, expiresAt])
+  @@map("email_otp_tokens")
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+  follower    User     @relation("follows", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("followedBy", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+}
+
+model Share {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("shares")
+}
+
+model PlatformSettings {
+  id                   String   @id @default("singleton")
+  siteName             String   @default("OCC")
+  announcementBanner   String?
+  announcementActive   Boolean  @default(false)
+  maintenanceMode      Boolean  @default(false)
+  registrationOpen     Boolean  @default(true)
+  landingHeroTitle     String?
+  landingHeroSubtitle  String?
+  featureFlags         Json     @default("{}")
+  rateLimitPolicy      Json     @default("{}")
+  legalPrivacyHtml     String?
+  legalTermsHtml       String?
+  landingCmsExtra      Json     @default("{}")
+  updatedAt            DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model AdminRoleTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String   @default("")
+  permissions Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+
+  @@map("admin_role_templates")
+}
+
+model ModerationTicket {
+  id           String    @id @default(cuid())
+  resourceType String
+  resourceId   String
+  status       String    @default("OPEN")
+  assigneeId   String?
+  dueAt        DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  assignee     User?     @relation("ModerationAssignee", fields: [assigneeId], references: [id])
+
+  @@unique([resourceType, resourceId])
+  @@index([status, dueAt])
+  @@map("moderation_tickets")
+}
+
+model AdminBroadcast {
+  id             String    @id @default(cuid())
+  title          String
+  message        String
+  audienceType   String    @default("all")
+  audienceFilter Json?
+  createdById    String
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  recipientCount Int?
+  createdBy      User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@map("admin_broadcasts")
+}
+
+model AdminScheduledAnnouncement {
+  id        String   @id @default(cuid())
+  title     String   @default("")
+  body      String
+  startsAt  DateTime
+  endsAt    DateTime
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, startsAt, endsAt])
+  @@map("admin_scheduled_announcements")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  adminEmail String
+  action     String
+  entity     String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  admin      User     @relation(fields: [adminId], references: [id])
+
+  @@index([adminId, createdAt])
+  @@index([entity, createdAt])
+  @@map("audit_logs")
+}
+
+model ActivityEvent {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actorName   String
+  actorRole   String?
+  eventType   String
+  category    String
+  entityType  String?
+  entityId    String?
+  summary     String
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("activity_events")
+}
+
+model OrbitProject {
+  id          String   @id @default(cuid())
+  title       String
+  category    String
+  description String   @default("")
+  imageUrl    String
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("orbit_projects")
+}
+
+model SuspiciousAccess {
+  id        String   @id @default(cuid())
+  userId    String?
+  ipAddress String
+  userAgent String?
+  path      String
+  reason    String
+  severity  String   @default("MEDIUM")
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([severity, resolved, createdAt])
+  @@map("suspicious_access")
+}
+
+enum UserRole {
+  STUDENT
+  CLUB_HEADER
+  ADMIN
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OtpPurpose {
+  REGISTER
+  RESET_PASSWORD
+  ADMIN_LOGIN
+}
+
+model OAuthPoll {
+  key       String   @id
+  token     String
+  email     String
+  createdAt DateTime @default(now())
+
+  @@map("oauth_polls")
+}

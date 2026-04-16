@@ -1,0 +1,17 @@
+{
+  "name": "OCC — Off Campus Clubs",
+  "short_name": "OCC",
+  "description": "Off Campus Clubs connects students across colleges through clubs, gigs, and events.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0C0C0A",
+  "theme_color": "#0C0C0A",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

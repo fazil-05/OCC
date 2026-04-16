@@ -1,0 +1,38 @@
+/* Google/Fontshare @import lives in app/globals.css (must precede Tailwind output). */
+
+@font-face {
+  font-family: "Homoarak";
+  src: url("/fonts/HOMOARAK.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-headline {
+  font-family: "Bebas Neue", Impact, sans-serif;
+}
+.font-accent {
+  font-family: "Playfair Display", serif;
+  font-style: italic;
+}
+.font-body-bikers {
+  font-family: "DM Sans", system-ui, sans-serif;
+}
+.font-mono-label {
+  font-family: "DM Mono", ui-monospace, monospace;
+}
+.font-editorial {
+  font-family: "Playfair Display", serif;
+  font-style: italic;
+}
+
+@keyframes grain-shift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(-1.2%, -0.9%, 0); }
+  50% { transform: translate3d(0.9%, 1.1%, 0); }
+  75% { transform: translate3d(-0.6%, 0.7%, 0); }
+}
+.animate-grain {
+  animation: grain-shift 1.2s linear infinite;
+  will-change: transform;
+}
