@@ -145,33 +145,38 @@ export async function GET(req: NextRequest) {
         try { returnUrl = Buffer.from(encodedReturn, "base64").toString("utf-8"); } catch (e) {}
       }
       
+      const returnUrl = "OCC://"; 
       console.log(`[GOOGLE CALLBACK] Forcing App Redirect: ${returnUrl}`);
       
-      // Instead of server-side redirect, we use a client-side "Auto-Redirector" 
-      // This is MUCH more reliable for closing mobile browser tabs.
       return new NextResponse(
         `<!DOCTYPE html>
         <html>
           <head>
-            <title>Redirecting...</title>
+            <title>Redirecting to App...</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="refresh" content="3;url=${returnUrl}">
             <style>
-              body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #000; color: #fff; text-align: center; }
-              .spinner { border: 4px solid rgba(255,255,255,0.1); border-left-color: #fff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #f8fafc; text-align: center; padding: 20px; }
+              .spinner { border: 3px solid rgba(255,255,255,0.1); border-left-color: #38bdf8; border-radius: 50%; width: 50px; height: 50px; animation: spin 0.8s linear infinite; margin-bottom: 24px; }
               @keyframes spin { to { transform: rotate(360deg); } }
-              a { color: #4facfe; text-decoration: none; margin-top: 20px; font-size: 14px; }
+              h2 { font-size: 24px; margin-bottom: 8px; font-weight: 600; }
+              p { color: #94a3b8; margin-bottom: 32px; }
+              .btn { background: #38bdf8; color: #0f172a; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; transition: opacity 0.2s; }
             </style>
           </head>
           <body>
             <div class="spinner"></div>
-            <h2>Authenticating...</h2>
-            <p>Returning you to the app automatically.</p>
-            <a href="${returnUrl}">Click here if you are not redirected</a>
+            <h2>Success!</h2>
+            <p>You are now authenticated. Returning to the app...</p>
+            <a href="${returnUrl}" class="btn">Open App Now</a>
             <script>
-              // Force the redirect
-              setTimeout(() => {
+              function attemptRedirect() {
+                window.location.replace("${returnUrl}");
                 window.location.href = "${returnUrl}";
-              }, 500);
+              }
+              // Attempt immediately and again in 500ms
+              attemptRedirect();
+              setTimeout(attemptRedirect, 500);
             </script>
           </body>
         </html>`,
