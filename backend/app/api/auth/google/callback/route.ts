@@ -78,15 +78,16 @@ export async function GET(req: NextRequest) {
   // Extract CSRF part and encoded payload from state BEFORE defining failRedirect
   // State formats:
   //   web:              "{csrf}"
-  //   mobile (poll):    "{csrf}:poll:{base64(pollKey)}"
+  //   mobile (poll):    "{csrf}:poll:{pollKey}:{base64(returnTo)}"
   //   mobile (returnTo):  "{csrf}:{base64(returnTo)}"
   const stateParts = (state ?? "").split(":");
   const stateCsrf = stateParts[0] ?? "";
   const isPollMode = stateParts[1] === "poll";
   const pollKey = isPollMode ? (stateParts[2] ?? "") : "";
+  const pollEncodedReturn = isPollMode && stateParts.length > 3 ? stateParts[3] : null;
 
   // Legacy returnTo mode
-  const stateEncodedReturn = !isPollMode && stateParts.length > 1 ? stateParts[1] : null;
+  const stateEncodedReturn = !isPollMode && stateParts.length > 1 ? stateParts[1] : pollEncodedReturn;
   let stateDecodedReturnUrl: string | null = null;
   if (stateEncodedReturn) {
     try {
@@ -290,7 +291,8 @@ export async function GET(req: NextRequest) {
 
     // Check if the user is on mobile by looking at the user agent or if they requested OCC://
     // We will redirect back to the custom scheme to force the browser window to close seamlessly!
-    const res = NextResponse.redirect("OCC://google-auth");
+    const returnUrl = stateDecodedReturnUrl || "OCC://google-auth";
+    const res = NextResponse.redirect(returnUrl);
     res.cookies.set("occ-token", token, authCookieOptions);
     res.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
     res.cookies.delete(GOOGLE_OAUTH_REDIRECT_COOKIE);
