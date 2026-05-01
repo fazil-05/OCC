@@ -102,26 +102,19 @@ export async function GET(req: NextRequest) {
 
   console.log(`[GOOGLE CALLBACK] Flow info -> isPoll: ${isPollMode}, isMobile: ${isMobileFlow}, state: ${state?.slice(0, 20)}...`);
 
-  const failRedirect = (message: string) => {
-    console.error(`[GOOGLE CALLBACK] Failure: ${message}`);
-    let destination: string;
-    if (isMobileFlow && stateDecodedReturnUrl) {
-      destination = `${stateDecodedReturnUrl}${stateDecodedReturnUrl.includes("?") ? "&" : "?"}error=${encodeURIComponent(message)}`;
-    } else {
-      destination = new URL(`${authErrorBase}?error=${encodeURIComponent(message)}`, req.url).toString();
-    }
-    const res = NextResponse.redirect(destination);
-    res.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
-    res.cookies.delete(GOOGLE_OAUTH_REDIRECT_COOKIE);
-    res.cookies.delete(GOOGLE_OAUTH_REFERRAL_COOKIE);
-    res.cookies.delete(GOOGLE_OAUTH_FROM_COOKIE);
-    return res;
+  const failRedirect = (message: string, detail?: string) => {
+    console.error(`[GOOGLE CALLBACK] Failure: ${message} | Detail: ${detail}`);
+    // If we're debugging, return a plain text response so the user can see the error
+    return new NextResponse(
+      `LOGIN ERROR: ${message}\n\nTechnical Detail: ${detail || "None"}\n\nPlease copy this message and send it to support.`,
+      { status: 500, headers: { "Content-Type": "text/plain" } }
+    );
   };
 
   try {
-    if (oauthError) return failRedirect("Google sign-in was cancelled");
-    if (!code || !state) return failRedirect("Missing OAuth parameters");
-    if (!clientId || !clientSecret) return failRedirect("Google OAuth is not configured");
+    if (oauthError) return failRedirect("Google sign-in was cancelled", oauthError);
+    if (!code || !state) return failRedirect("Missing OAuth parameters", `code=${!!code}, state=${!!state}`);
+    if (!clientId || !clientSecret) return failRedirect("Google OAuth is not configured", `ID=${!!clientId}, SEC=${!!clientSecret}`);
 
     const cookieState = req.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)?.value;
     const csrfValid = cookieState && cookieState.split(":")[0] === stateCsrf;
@@ -130,7 +123,7 @@ export async function GET(req: NextRequest) {
     if (!csrfValid && !pollModeTrusted) {
       console.warn(`[GOOGLE CALLBACK] CSRF mismatch. Cookie: ${cookieState}, State: ${stateCsrf}`);
       // On mobile we allow it if pollMode is active
-      if (!isPollMode) return failRedirect("Invalid session. Please try again.");
+      if (!isPollMode) return failRedirect("Invalid session. Please try again.", "CSRF mismatch");
     }
 
     const redirectUri = oauthCallbackUrl(req);
@@ -141,11 +134,11 @@ export async function GET(req: NextRequest) {
       clientId,
       clientSecret,
       redirectUri,
-    });
+    }).catch(e => { throw new Error(`Token exchange failed: ${e.message}`); });
 
     console.log(`[GOOGLE CALLBACK] Fetching user info...`);
-    const googleUser = await fetchGoogleUserInfo(access_token);
-    if (!googleUser.email) return failRedirect("Google did not return an email");
+    const googleUser = await fetchGoogleUserInfo(access_token).catch(e => { throw new Error(`Fetch user info failed: ${e.message}`); });
+    if (!googleUser.email) return failRedirect("Google did not return an email", "No email in profile");
 
     const email = googleUser.email.toLowerCase().trim();
     console.log(`[GOOGLE CALLBACK] Authenticated as: ${email}`);
@@ -211,6 +204,6 @@ export async function GET(req: NextRequest) {
 
   } catch (err: any) {
     console.error("[GOOGLE CALLBACK] Critical Error:", err);
-    return failRedirect("A server error occurred during login");
+    return failRedirect("A server error occurred during login", err.message || String(err));
   }
 }
