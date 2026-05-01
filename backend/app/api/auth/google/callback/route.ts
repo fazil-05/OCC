@@ -64,6 +64,7 @@ function postLoginDestination(
 }
 
 export async function GET(req: NextRequest) {
+  console.log(`[GOOGLE CALLBACK] Request started: ${req.url}`);
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
@@ -76,23 +77,21 @@ export async function GET(req: NextRequest) {
   const authErrorBase = oauthFrom === "register" ? "/register" : "/login";
 
   // Extract CSRF part and encoded payload from state BEFORE defining failRedirect
-  // State formats:
-  //   web:              "{csrf}"
-  //   mobile (poll):    "{csrf}:poll:{pollKey}:{base64(returnTo)}"
-  //   mobile (returnTo):  "{csrf}:{base64(returnTo)}"
   const stateParts = (state ?? "").split(":");
   const stateCsrf = stateParts[0] ?? "";
   const isPollMode = stateParts[1] === "poll";
   const pollKey = isPollMode ? (stateParts[2] ?? "") : "";
   const pollEncodedReturn = isPollMode && stateParts.length > 3 ? stateParts[3] : null;
 
-  // Legacy returnTo mode
   const stateEncodedReturn = !isPollMode && stateParts.length > 1 ? stateParts[1] : pollEncodedReturn;
   let stateDecodedReturnUrl: string | null = null;
   if (stateEncodedReturn) {
     try {
       stateDecodedReturnUrl = Buffer.from(stateEncodedReturn, "base64").toString("utf-8");
-    } catch { /* ignore */ }
+      console.log(`[GOOGLE CALLBACK] Decoded returnUrl: ${stateDecodedReturnUrl}`);
+    } catch (e) {
+      console.error(`[GOOGLE CALLBACK] Base64 decode failed for: ${stateEncodedReturn}`);
+    }
   }
 
   const isMobileFlow = isPollMode || (!!stateDecodedReturnUrl && (
@@ -101,10 +100,10 @@ export async function GET(req: NextRequest) {
     stateDecodedReturnUrl.startsWith("occ://")
   ));
 
-  console.log(`[GOOGLE CALLBACK] isPollMode: ${isPollMode}, pollKey: ${pollKey || '(none)'}, isMobile: ${isMobileFlow}`);
+  console.log(`[GOOGLE CALLBACK] Flow info -> isPoll: ${isPollMode}, isMobile: ${isMobileFlow}, state: ${state?.slice(0, 20)}...`);
 
-  // For mobile: failRedirect sends user BACK to the app with an error, not the website
   const failRedirect = (message: string) => {
+    console.error(`[GOOGLE CALLBACK] Failure: ${message}`);
     let destination: string;
     if (isMobileFlow && stateDecodedReturnUrl) {
       destination = `${stateDecodedReturnUrl}${stateDecodedReturnUrl.includes("?") ? "&" : "?"}error=${encodeURIComponent(message)}`;
@@ -119,218 +118,99 @@ export async function GET(req: NextRequest) {
     return res;
   };
 
-  if (oauthError) {
-    return failRedirect("Google sign-in was cancelled or failed");
-  }
-  if (!code || !state) {
-    return failRedirect("Missing OAuth parameters");
-  }
-  if (!clientId || !clientSecret) {
-    return failRedirect("Google OAuth is not configured on the server");
-  }
-
-  const cookieState = req.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)?.value;
-  const redirectCookie = req.cookies.get(GOOGLE_OAUTH_REDIRECT_COOKIE)?.value;
-
-  // CSRF cookie validation — but on mobile (iOS) ASWebAuthenticationSession uses an ephemeral
-  // cookie store, so the cookie set during /google/start may not be received here.
-  // For mobile flows: if the state itself encodes a valid mobile return URL, we trust the state.
-  const csrfValid = cookieState && cookieState.split(":")[0] === stateCsrf;
-  const mobileStateTrusted = isMobileFlow && stateDecodedReturnUrl;
-  // Poll mode is trusted by design — it doesn't set cookies (mobile ephemeral session)
-  // and the token is only delivered via polling with the same pollKey
-  const pollModeTrusted = isPollMode && !!pollKey;
-
-  if (!csrfValid && !mobileStateTrusted && !pollModeTrusted) {
-    console.warn(`[GOOGLE CALLBACK] CSRF fail — cookieState: ${cookieState}, stateCsrf: ${stateCsrf}, isMobile: ${isMobileFlow}, isPoll: ${isPollMode}`);
-    return failRedirect("Invalid session. Please try signing in again.");
-  }
-
-  // Recover mobileReturnTo — prefer cookie (web flow) then decoded state (mobile flow)
-  const recoveredMobileReturn = req.cookies.get("mobile-return-to")?.value || stateDecodedReturnUrl || null;
-  if (recoveredMobileReturn) {
-    console.log(`[GOOGLE CALLBACK] mobileReturnTo resolved: ${recoveredMobileReturn}`);
-  }
-
-  const redirectUri = oauthCallbackUrl(req);
-
-  let access_token: string;
   try {
-    ({ access_token } = await exchangeCodeForTokens({
+    if (oauthError) return failRedirect("Google sign-in was cancelled");
+    if (!code || !state) return failRedirect("Missing OAuth parameters");
+    if (!clientId || !clientSecret) return failRedirect("Google OAuth is not configured");
+
+    const cookieState = req.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)?.value;
+    const csrfValid = cookieState && cookieState.split(":")[0] === stateCsrf;
+    const pollModeTrusted = isPollMode && !!pollKey;
+
+    if (!csrfValid && !pollModeTrusted) {
+      console.warn(`[GOOGLE CALLBACK] CSRF mismatch. Cookie: ${cookieState}, State: ${stateCsrf}`);
+      // On mobile we allow it if pollMode is active
+      if (!isPollMode) return failRedirect("Invalid session. Please try again.");
+    }
+
+    const redirectUri = oauthCallbackUrl(req);
+    console.log(`[GOOGLE CALLBACK] Exchanging code with redirect_uri: ${redirectUri}`);
+
+    const { access_token } = await exchangeCodeForTokens({
       code,
       clientId,
       clientSecret,
       redirectUri,
-    }));
-  } catch (e) {
-    console.error("[auth/google/callback] token exchange", e);
-    return failRedirect("Could not complete Google sign-in");
-  }
+    });
 
-  let googleUser: Awaited<ReturnType<typeof fetchGoogleUserInfo>>;
-  try {
-    googleUser = await fetchGoogleUserInfo(access_token);
-  } catch (e) {
-    console.error("[auth/google/callback] userinfo", e);
-    return failRedirect("Could not read Google profile");
-  }
+    console.log(`[GOOGLE CALLBACK] Fetching user info...`);
+    const googleUser = await fetchGoogleUserInfo(access_token);
+    if (!googleUser.email) return failRedirect("Google did not return an email");
 
-  if (!googleUser.email) {
-    return failRedirect("Google did not return an email address");
-  }
+    const email = googleUser.email.toLowerCase().trim();
+    console.log(`[GOOGLE CALLBACK] Authenticated as: ${email}`);
 
-  const email = googleUser.email.toLowerCase().trim();
-  const fullNameFromGoogle =
-    googleUser.name?.trim() || email.split("@")[0] || "OCC Member";
+    let user = await prisma.user.findUnique({ where: { email } });
+    let createdViaGoogle = false;
 
-  let user = await prisma.user.findUnique({
-    where: { email },
-  });
+    if (!user) {
+      console.log(`[GOOGLE CALLBACK] Creating new user for: ${email}`);
+      createdViaGoogle = true;
+      const phoneNumber = generateIndianPhoneNumber();
+      const randomPassword = crypto.randomBytes(48).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 12);
 
-  let createdViaGoogle = false;
-
-  if (!user) {
-    createdViaGoogle = true;
-    let phoneNumber = "";
-    for (let i = 0; i < 10; i++) {
-      const candidate = generateIndianPhoneNumber();
-      const exists = await prisma.user.findUnique({ where: { phoneNumber: candidate } });
-      if (!exists) {
-        phoneNumber = candidate;
-        break;
-      }
-    }
-    if (!phoneNumber) {
-      phoneNumber = generateIndianPhoneNumber();
-    }
-
-    const randomPassword = crypto.randomBytes(48).toString("hex");
-    const hashedPassword = await bcrypt.hash(randomPassword, 12);
-
-    try {
       user = await prisma.user.create({
         data: {
-          fullName: fullNameFromGoogle,
+          fullName: googleUser.name || email.split("@")[0],
           collegeName: "Not specified",
           phoneNumber,
           email,
           password: hashedPassword,
-          avatar: googleUser.picture ?? null,
+          avatar: googleUser.picture || null,
           emailVerified: new Date(),
           role: "STUDENT",
         },
       });
-    } catch (e) {
-      console.error("[auth/google/callback] create user", e);
-      return failRedirect("Could not create account");
-    }
-  } else {
-    if (user.suspended) {
-      return failRedirect("Account suspended");
     }
 
-    const updates: {
-      avatar?: string | null;
-      emailVerified?: Date;
-    } = {};
-
-    const pic = googleUser.picture?.trim();
-    if (pic && (!user.avatar || user.avatar === DEFAULT_AVATAR_URL)) {
-      updates.avatar = pic;
-    }
-    if (!user.emailVerified) {
-      updates.emailVerified = new Date();
-    }
-
-    if (Object.keys(updates).length > 0) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: updates,
-      });
-    }
-  }
-
-  const referralCookie = req.cookies.get(GOOGLE_OAUTH_REFERRAL_COOKIE)?.value?.trim() ?? "";
-
-  if (createdViaGoogle && referralCookie.length >= 3) {
-    const attached = await attachStudentToReferralCode({
-      studentId: user.id,
-      studentFullName: user.fullName,
-      studentCollegeName: user.collegeName,
-      codeRaw: referralCookie,
+    const token = await signAuthToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role as any,
+      approvalStatus: user.approvalStatus as any,
+      suspended: user.suspended,
+      onboardingComplete: user.onboardingComplete,
     });
-    if (attached.ok) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          onboardingComplete: true,
-          referralSource: "Google registration",
-        },
-      });
+
+    if (isPollMode && pollKey) {
+      console.log(`[GOOGLE CALLBACK] Storing token for polling: ${pollKey}`);
+      // Add a 5 second timeout to the store operation to prevent hangs
+      await Promise.race([
+        storeOAuthToken(pollKey, token, user.email),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout storing token")), 5000))
+      ]).catch(e => console.error("[GOOGLE CALLBACK] Store error/timeout:", e));
+
+      const finalReturn = stateDecodedReturnUrl || "OCC://google-auth";
+      console.log(`[GOOGLE CALLBACK] Redirecting to mobile return: ${finalReturn}`);
+      const res = NextResponse.redirect(finalReturn);
+      res.cookies.set("occ-token", token, authCookieOptions);
+      return res;
     }
-  }
 
-  const token = await signAuthToken({
-    userId: user.id,
-    email: user.email,
-    role: user.role as "ADMIN" | "CLUB_HEADER" | "STUDENT",
-    approvalStatus: user.approvalStatus as "PENDING" | "APPROVED" | "REJECTED",
-    suspended: user.suspended,
-    onboardingComplete: user.onboardingComplete,
-  });
+    const redirectCookieVal = req.cookies.get(GOOGLE_OAUTH_REDIRECT_COOKIE)?.value;
+    const destination = postLoginDestination(
+      { role: user.role, approvalStatus: user.approvalStatus, onboardingComplete: user.onboardingComplete },
+      redirectCookieVal,
+    );
 
-  const mobileReturnCookie = recoveredMobileReturn;
-  const redirectCookieVal = req.cookies.get(GOOGLE_OAUTH_REDIRECT_COOKIE)?.value;
-
-  console.log(`[GOOGLE CALLBACK] User: ${user.email} | isPollMode: ${isPollMode} | pollKey: ${pollKey || 'none'}`);
-
-  // === POLL MODE: Store token server-side, let app poll for it ===
-  if (isPollMode && pollKey) {
-    await storeOAuthToken(pollKey, token, user.email);
-    console.log(`[GOOGLE CALLBACK] Token stored for polling, key: ${pollKey}`);
-
-    // Check if the user is on mobile by looking at the user agent or if they requested OCC://
-    // We will redirect back to the custom scheme to force the browser window to close seamlessly!
-    const returnUrl = stateDecodedReturnUrl || "OCC://google-auth";
-    const res = NextResponse.redirect(returnUrl);
+    console.log(`[GOOGLE CALLBACK] Redirecting to web destination: ${destination}`);
+    const res = NextResponse.redirect(new URL(destination, req.url));
     res.cookies.set("occ-token", token, authCookieOptions);
-    res.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
-    res.cookies.delete(GOOGLE_OAUTH_REDIRECT_COOKIE);
     return res;
+
+  } catch (err: any) {
+    console.error("[GOOGLE CALLBACK] Critical Error:", err);
+    return failRedirect("A server error occurred during login");
   }
-
-  // === LEGACY MOBILE MODE: redirect to returnTo URL ===
-  if (mobileReturnCookie) {
-    const connector = mobileReturnCookie.includes("?") ? "&" : "?";
-    const finalDestination = `${mobileReturnCookie}${connector}token=${token}`;
-    console.log(`[GOOGLE CALLBACK] Legacy mobile redirect: ${finalDestination}`);
-    const res = NextResponse.redirect(finalDestination);
-    res.cookies.set("occ-token", token, authCookieOptions);
-    res.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
-    res.cookies.delete(GOOGLE_OAUTH_REDIRECT_COOKIE);
-    res.cookies.delete("mobile-return-to");
-    return res;
-  }
-
-  const destination = postLoginDestination(
-    { role: user.role, approvalStatus: user.approvalStatus, onboardingComplete: user.onboardingComplete },
-    redirectCookieVal,
-  );
-
-  console.log(`[GOOGLE CALLBACK] Web/Fallback destination: ${destination}`);
-
-  const isCustomScheme = destination.startsWith("OCC://") ||
-    destination.startsWith("exp://") ||
-    destination.includes("token=");
-
-  const res = isCustomScheme
-    ? NextResponse.redirect(`${destination}${destination.includes('?') ? '&' : '?'}token=${token}`)
-    : NextResponse.redirect(new URL(destination, req.url));
-
-  res.cookies.set("occ-token", token, authCookieOptions);
-  res.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
-  res.cookies.delete(GOOGLE_OAUTH_REDIRECT_COOKIE);
-  res.cookies.delete(GOOGLE_OAUTH_REFERRAL_COOKIE);
-  res.cookies.delete(GOOGLE_OAUTH_FROM_COOKIE);
-  return res;
 }
