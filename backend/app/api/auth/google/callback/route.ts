@@ -82,36 +82,12 @@ export async function GET(req: NextRequest) {
 
     const googleUser = await fetchGoogleUserInfo(access_token);
     const email = googleUser.email?.toLowerCase().trim();
-    if (!email) return new NextResponse("Error: No email from Google", { status: 500 });
 
-    let user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      // Create a minimal user
-      user = await prisma.user.create({
-        data: {
-          fullName: googleUser.name || email.split("@")[0],
-          email,
-          phoneNumber: "0000000000" + Math.floor(Math.random() * 1000),
-          password: "minimal_password_" + Date.now(),
-          collegeName: "Not specified",
-          role: "STUDENT",
-        },
-      });
-    }
-
-    const token = await signAuthToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role as any,
-      approvalStatus: user.approvalStatus as any,
-      onboardingComplete: user.onboardingComplete,
-    });
-
-    return new NextResponse(`SUCCESS! TOKEN: ${token}`, { status: 200 });
+    return new NextResponse(`ZERO DATABASE SUCCESS! Authenticated as: ${email}`, { status: 200 });
 
   } catch (err: any) {
     console.error(err);
-    return new NextResponse(`CRITICAL ERROR: ${err.message || String(err)}`, { status: 500 });
+    return new NextResponse(`ZERO DATABASE ERROR: ${err.message || String(err)}`, { status: 500 });
   }
 }
 }
