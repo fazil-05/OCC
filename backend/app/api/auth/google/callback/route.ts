@@ -145,10 +145,38 @@ export async function GET(req: NextRequest) {
         try { returnUrl = Buffer.from(encodedReturn, "base64").toString("utf-8"); } catch (e) {}
       }
       
-      console.log(`[GOOGLE CALLBACK] Redirecting to App: ${returnUrl}`);
-      const res = NextResponse.redirect(returnUrl);
-      res.cookies.set("occ-token", token, authCookieOptions);
-      return res;
+      console.log(`[GOOGLE CALLBACK] Forcing App Redirect: ${returnUrl}`);
+      
+      // Instead of server-side redirect, we use a client-side "Auto-Redirector" 
+      // This is MUCH more reliable for closing mobile browser tabs.
+      return new NextResponse(
+        `<!DOCTYPE html>
+        <html>
+          <head>
+            <title>Redirecting...</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #000; color: #fff; text-align: center; }
+              .spinner { border: 4px solid rgba(255,255,255,0.1); border-left-color: #fff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+              @keyframes spin { to { transform: rotate(360deg); } }
+              a { color: #4facfe; text-decoration: none; margin-top: 20px; font-size: 14px; }
+            </style>
+          </head>
+          <body>
+            <div class="spinner"></div>
+            <h2>Authenticating...</h2>
+            <p>Returning you to the app automatically.</p>
+            <a href="${returnUrl}">Click here if you are not redirected</a>
+            <script>
+              // Force the redirect
+              setTimeout(() => {
+                window.location.href = "${returnUrl}";
+              }, 500);
+            </script>
+          </body>
+        </html>`,
+        { status: 200, headers: { "Content-Type": "text/html" } }
+      );
     }
 
     console.log("[GOOGLE CALLBACK] Web Mode -> redirecting to dashboard");
