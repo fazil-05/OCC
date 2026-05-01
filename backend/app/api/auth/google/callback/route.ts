@@ -64,30 +64,85 @@ function postLoginDestination(
 }
 
 export async function GET(req: NextRequest) {
+  console.log(`[GOOGLE CALLBACK] Request started: ${req.url}`);
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
-    const code = req.nextUrl.searchParams.get("code");
+    
+    const url = req.nextUrl;
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+
+    if (!code || !state) {
+      return new NextResponse("Error: Missing OAuth parameters", { status: 400 });
+    }
+
+    // Parse state: {csrf}:poll:{pollKey}:{base64(returnUrl)}
+    const stateParts = state.split(":");
+    const isPollMode = stateParts[1] === "poll";
+    const pollKey = isPollMode ? stateParts[2] : null;
+    const encodedReturn = isPollMode && stateParts.length > 3 ? stateParts[3] : (stateParts.length > 1 ? stateParts[1] : null);
+    
+    let returnUrl = "OCC://google-auth";
+    if (encodedReturn) {
+      try {
+        returnUrl = Buffer.from(encodedReturn, "base64").toString("utf-8");
+      } catch (e) {
+        console.error("Return URL decode failed", e);
+      }
+    }
+
     const redirectUri = oauthCallbackUrl(req);
-
-    if (!code) return new NextResponse("Error: Missing code", { status: 400 });
-    if (!clientId || !clientSecret) return new NextResponse("Error: Missing credentials", { status: 500 });
-
     const { access_token } = await exchangeCodeForTokens({
       code,
-      clientId,
-      clientSecret,
+      clientId: clientId!,
+      clientSecret: clientSecret!,
       redirectUri,
     });
 
     const googleUser = await fetchGoogleUserInfo(access_token);
-    const email = googleUser.email?.toLowerCase().trim();
+    const email = googleUser.email!.toLowerCase().trim();
 
-    return new NextResponse(`ZERO DATABASE SUCCESS! Authenticated as: ${email}`, { status: 200 });
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          fullName: googleUser.name || email.split("@")[0],
+          email,
+          phoneNumber: generateIndianPhoneNumber(),
+          password: crypto.randomBytes(32).toString("hex"),
+          collegeName: "Not specified",
+          avatar: googleUser.picture || null,
+          emailVerified: new Date(),
+          role: "STUDENT",
+        },
+      });
+    }
+
+    const token = await signAuthToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role as any,
+      approvalStatus: user.approvalStatus as any,
+      onboardingComplete: user.onboardingComplete,
+    });
+
+    if (isPollMode && pollKey) {
+      await storeOAuthToken(pollKey, token, user.email);
+      console.log(`[GOOGLE CALLBACK] Stored token for poll key: ${pollKey}`);
+      
+      const res = NextResponse.redirect(returnUrl);
+      res.cookies.set("occ-token", token, authCookieOptions);
+      return res;
+    }
+
+    // Fallback for web
+    const res = NextResponse.redirect(new URL("/dashboard", req.url));
+    res.cookies.set("occ-token", token, authCookieOptions);
+    return res;
 
   } catch (err: any) {
-    console.error(err);
-    return new NextResponse(`ZERO DATABASE ERROR: ${err.message || String(err)}`, { status: 500 });
+    console.error("[GOOGLE CALLBACK] Error:", err);
+    return new NextResponse(`LOGIN ERROR: ${err.message || String(err)}`, { status: 500 });
   }
-}
 }
