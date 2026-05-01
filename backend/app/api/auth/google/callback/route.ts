@@ -64,104 +64,36 @@ function postLoginDestination(
 }
 
 export async function GET(req: NextRequest) {
-  console.log(`[GOOGLE CALLBACK] Request started: ${req.url}`);
-  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
-
-  const url = req.nextUrl;
-  const oauthError = url.searchParams.get("error");
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-
-  const oauthFrom = req.cookies.get(GOOGLE_OAUTH_FROM_COOKIE)?.value;
-  const authErrorBase = oauthFrom === "register" ? "/register" : "/login";
-
-  // Extract CSRF part and encoded payload from state BEFORE defining failRedirect
-  const stateParts = (state ?? "").split(":");
-  const stateCsrf = stateParts[0] ?? "";
-  const isPollMode = stateParts[1] === "poll";
-  const pollKey = isPollMode ? (stateParts[2] ?? "") : "";
-  const pollEncodedReturn = isPollMode && stateParts.length > 3 ? stateParts[3] : null;
-
-  const stateEncodedReturn = !isPollMode && stateParts.length > 1 ? stateParts[1] : pollEncodedReturn;
-  let stateDecodedReturnUrl: string | null = null;
-  if (stateEncodedReturn) {
-    try {
-      stateDecodedReturnUrl = Buffer.from(stateEncodedReturn, "base64").toString("utf-8");
-      console.log(`[GOOGLE CALLBACK] Decoded returnUrl: ${stateDecodedReturnUrl}`);
-    } catch (e) {
-      console.error(`[GOOGLE CALLBACK] Base64 decode failed for: ${stateEncodedReturn}`);
-    }
-  }
-
-  const isMobileFlow = isPollMode || (!!stateDecodedReturnUrl && (
-    stateDecodedReturnUrl.startsWith("exp://") ||
-    stateDecodedReturnUrl.startsWith("OCC://") ||
-    stateDecodedReturnUrl.startsWith("occ://")
-  ));
-
-  console.log(`[GOOGLE CALLBACK] Flow info -> isPoll: ${isPollMode}, isMobile: ${isMobileFlow}, state: ${state?.slice(0, 20)}...`);
-
-  const failRedirect = (message: string, detail?: string) => {
-    console.error(`[GOOGLE CALLBACK] Failure: ${message} | Detail: ${detail}`);
-    // If we're debugging, return a plain text response so the user can see the error
-    return new NextResponse(
-      `LOGIN ERROR: ${message}\n\nTechnical Detail: ${detail || "None"}\n\nPlease copy this message and send it to support.`,
-      { status: 500, headers: { "Content-Type": "text/plain" } }
-    );
-  };
-
   try {
-    if (oauthError) return failRedirect("Google sign-in was cancelled", oauthError);
-    if (!code || !state) return failRedirect("Missing OAuth parameters", `code=${!!code}, state=${!!state}`);
-    if (!clientId || !clientSecret) return failRedirect("Google OAuth is not configured", `ID=${!!clientId}, SEC=${!!clientSecret}`);
-
-    const cookieState = req.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)?.value;
-    const csrfValid = cookieState && cookieState.split(":")[0] === stateCsrf;
-    const pollModeTrusted = isPollMode && !!pollKey;
-
-    if (!csrfValid && !pollModeTrusted) {
-      console.warn(`[GOOGLE CALLBACK] CSRF mismatch. Cookie: ${cookieState}, State: ${stateCsrf}`);
-      // On mobile we allow it if pollMode is active
-      if (!isPollMode) return failRedirect("Invalid session. Please try again.", "CSRF mismatch");
-    }
-
+    const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+    const code = req.nextUrl.searchParams.get("code");
     const redirectUri = oauthCallbackUrl(req);
-    console.log(`[GOOGLE CALLBACK] Exchanging code with redirect_uri: ${redirectUri}`);
+
+    if (!code) return new NextResponse("Error: Missing code", { status: 400 });
+    if (!clientId || !clientSecret) return new NextResponse("Error: Missing credentials", { status: 500 });
 
     const { access_token } = await exchangeCodeForTokens({
       code,
       clientId,
       clientSecret,
       redirectUri,
-    }).catch(e => { throw new Error(`Token exchange failed: ${e.message}`); });
+    });
 
-    console.log(`[GOOGLE CALLBACK] Fetching user info...`);
-    const googleUser = await fetchGoogleUserInfo(access_token).catch(e => { throw new Error(`Fetch user info failed: ${e.message}`); });
-    if (!googleUser.email) return failRedirect("Google did not return an email", "No email in profile");
-
-    const email = googleUser.email.toLowerCase().trim();
-    console.log(`[GOOGLE CALLBACK] Authenticated as: ${email}`);
+    const googleUser = await fetchGoogleUserInfo(access_token);
+    const email = googleUser.email?.toLowerCase().trim();
+    if (!email) return new NextResponse("Error: No email from Google", { status: 500 });
 
     let user = await prisma.user.findUnique({ where: { email } });
-    let createdViaGoogle = false;
-
     if (!user) {
-      console.log(`[GOOGLE CALLBACK] Creating new user for: ${email}`);
-      createdViaGoogle = true;
-      const phoneNumber = generateIndianPhoneNumber();
-      const randomPassword = crypto.randomBytes(48).toString("hex");
-      const hashedPassword = await bcrypt.hash(randomPassword, 12);
-
+      // Create a minimal user
       user = await prisma.user.create({
         data: {
           fullName: googleUser.name || email.split("@")[0],
-          collegeName: "Not specified",
-          phoneNumber,
           email,
-          password: hashedPassword,
-          avatar: googleUser.picture || null,
-          emailVerified: new Date(),
+          phoneNumber: "0000000000" + Math.floor(Math.random() * 1000),
+          password: "minimal_password_" + Date.now(),
+          collegeName: "Not specified",
           role: "STUDENT",
         },
       });
@@ -172,38 +104,14 @@ export async function GET(req: NextRequest) {
       email: user.email,
       role: user.role as any,
       approvalStatus: user.approvalStatus as any,
-      suspended: user.suspended,
       onboardingComplete: user.onboardingComplete,
     });
 
-    if (isPollMode && pollKey) {
-      console.log(`[GOOGLE CALLBACK] Storing token for polling: ${pollKey}`);
-      // Add a 5 second timeout to the store operation to prevent hangs
-      await Promise.race([
-        storeOAuthToken(pollKey, token, user.email),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout storing token")), 5000))
-      ]).catch(e => console.error("[GOOGLE CALLBACK] Store error/timeout:", e));
-
-      const finalReturn = stateDecodedReturnUrl || "OCC://google-auth";
-      console.log(`[GOOGLE CALLBACK] Redirecting to mobile return: ${finalReturn}`);
-      const res = NextResponse.redirect(finalReturn);
-      res.cookies.set("occ-token", token, authCookieOptions);
-      return res;
-    }
-
-    const redirectCookieVal = req.cookies.get(GOOGLE_OAUTH_REDIRECT_COOKIE)?.value;
-    const destination = postLoginDestination(
-      { role: user.role, approvalStatus: user.approvalStatus, onboardingComplete: user.onboardingComplete },
-      redirectCookieVal,
-    );
-
-    console.log(`[GOOGLE CALLBACK] Redirecting to web destination: ${destination}`);
-    const res = NextResponse.redirect(new URL(destination, req.url));
-    res.cookies.set("occ-token", token, authCookieOptions);
-    return res;
+    return new NextResponse(`SUCCESS! TOKEN: ${token}`, { status: 200 });
 
   } catch (err: any) {
-    console.error("[GOOGLE CALLBACK] Critical Error:", err);
-    return failRedirect("A server error occurred during login", err.message || String(err));
+    console.error(err);
+    return new NextResponse(`CRITICAL ERROR: ${err.message || String(err)}`, { status: 500 });
   }
+}
 }
